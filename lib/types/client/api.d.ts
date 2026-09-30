@@ -69,3 +69,11 @@ export interface CheckoutResult {
  * @returns the branch now checked out.
  */
 export declare function checkoutBranch(path: string, branch: string, signal?: AbortSignal): Promise<CheckoutResult>;
+/**
+ * Create `branch` at HEAD and check it out in the work tree at `path`.
+ * @param path - the absolute workspace directory.
+ * @param branch - short local branch name for the new branch.
+ * @param signal - abort signal.
+ * @returns the branch now checked out.
+ */
+export declare function createBranch(path: string, branch: string, signal?: AbortSignal): Promise<CheckoutResult>;

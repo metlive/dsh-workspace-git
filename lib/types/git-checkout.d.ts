@@ -14,3 +14,14 @@ export declare function assertSafeBranchName(branch: string): void;
 export declare function checkoutBranch(path: string, branch: string): Promise<{
     branch: string;
 }>;
+/**
+ * Create `branch` at the current HEAD and check it out (`git switch -c`).
+ * @param path - absolute workspace path.
+ * @param branch - short local branch name for the new branch.
+ * @returns the branch that is now checked out.
+ * @throws WorkspaceGitError when the path is not a repo, the name is unsafe,
+ *   or git rejects the create (e.g. the branch already exists).
+ */
+export declare function createBranch(path: string, branch: string): Promise<{
+    branch: string;
+}>;

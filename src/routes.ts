@@ -6,10 +6,11 @@
  * - `graph` — commit-graph page via `git log` (needs a git binary)
  * - `commit` — one commit's message + changed files (detail panel)
  * - `checkout` — switch the work tree to a local branch (`git switch`)
+ * - `create-branch` — create + check out a new branch (`git switch -c`)
  */
 import { isAbsolute } from 'node:path'
 import { MAX_PATHS_PER_REQUEST, type BranchCache } from './git-branch.ts'
-import { checkoutBranch } from './git-checkout.ts'
+import { checkoutBranch, createBranch } from './git-checkout.ts'
 import { fetchCommitDetail, type GitCommitDetail } from './git-commit-detail.ts'
 import { DEFAULT_GRAPH_PAGE_SIZE, MAX_GRAPH_PAGE_SIZE, fetchCommitGraph, type GitGraphSnapshot } from './git-graph.ts'
 import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts'
@@ -191,6 +192,22 @@ export async function resolveCheckout(
 }
 
 /**
+ * Create and check out a new branch, then bust the branch cache.
+ * @param cache - the activation-scoped branch cache.
+ * @param payload - the parsed request body.
+ * @returns the branch now checked out.
+ */
+export async function resolveCreateBranch(
+  cache: BranchCache,
+  payload: unknown,
+): Promise<{ branch: string }> {
+  const { path, branch } = parseCheckoutRequest(payload)
+  const result = await createBranch(path, branch)
+  cache.invalidate(path)
+  return result
+}
+
+/**
  * Narrow a commit-detail request: absolute path + full object id.
  * @param payload - the parsed request body.
  */
@@ -258,6 +275,10 @@ export function createApiHandler(
       }
       if (method === 'checkout') {
         writeOk(res, await resolveCheckout(cache, payload))
+        return
+      }
+      if (method === 'create-branch') {
+        writeOk(res, await resolveCreateBranch(cache, payload))
         return
       }
       throw new WorkspaceGitError('bad-request', `unknown workspace-git API method "${method}"`, 404)

@@ -25,10 +25,11 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { checkoutBranch, fetchRefs, WorkspaceGitApiError, type RefAnswer } from './api.ts'
+import { Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { checkoutBranch, createBranch, fetchRefs, WorkspaceGitApiError, type RefAnswer } from './api.ts'
 import { BranchIcon } from './BranchIcon.tsx'
 import { GraphIcon } from './GraphIcon.tsx'
+import { NewBranchIcon } from './NewBranchIcon.tsx'
 import { SearchIcon } from './SearchIcon.tsx'
 import { GitGraphDialog } from './git-graph/GitGraphDialog.tsx'
 import type { BranchStore } from './store.ts'
@@ -76,6 +77,10 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [graphOpen, setGraphOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createName, setCreateName] = useState('')
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [fixedPos, setFixedPos] = useState<CSSProperties | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const rootRef = useRef<HTMLSpanElement | null>(null)
@@ -257,6 +262,39 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   const openGraph = (): void => {
     setGraphOpen(true)
     close()
+  }
+
+  const openCreate = (): void => {
+    close()
+    setCreateName('')
+    setCreateError(null)
+    setCreateOpen(true)
+  }
+
+  const cancelCreate = (): void => {
+    setCreateOpen(false)
+    setCreateName('')
+    setCreateError(null)
+  }
+
+  const submitCreate = (): void => {
+    if (cwd === undefined || cwd === '' || createBusy) return
+    const name = createName.trim()
+    if (name === '') return
+    setCreateBusy(true)
+    setCreateError(null)
+    void createBranch(cwd, name)
+      .then((result) => {
+        store?.publish(cwd, { branch: result.branch, detached: false })
+        cancelCreate()
+      })
+      .catch((err) => {
+        const message = err instanceof WorkspaceGitApiError
+          ? err.message
+          : err instanceof Error ? err.message : String(err)
+        setCreateError(message)
+      })
+      .finally(() => { setCreateBusy(false) })
   }
 
   const title = switchError !== null
@@ -529,6 +567,32 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
         <button
           type="button"
           role="menuitem"
+          data-workspace-git-create-branch=""
+          style={{
+            ...rowStyle,
+            background: 'var(--dsw-alias-interactive-bg-hover)',
+          }}
+          onClick={openCreate}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              display: 'inline-flex',
+              flex: 'none',
+              width: '16px',
+              height: '16px',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--dsw-alias-label-tertiary)',
+            }}
+          >
+            <NewBranchIcon size={16} />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>{label('createBranch', 'Create and check out new branch…')}</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
           data-workspace-git-graph=""
           id={GIT_GRAPH_ID}
           style={rowStyle}
@@ -572,6 +636,64 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
           onClose={() => { setGraphOpen(false) }}
           t={t}
         />
+      ) : null}
+      {createOpen && cwd !== undefined && cwd !== '' ? (
+        <Modal
+          open={createOpen}
+          onClose={cancelCreate}
+          title={label('createBranch', 'Create and check out new branch…')}
+          closeLabel={label('cancel', 'Cancel')}
+          className="workspace-git-create-branch-dialog"
+          contentClassName="workspace-git-create-branch-modal"
+        >
+          <form
+            onSubmit={(e) => { e.preventDefault(); submitCreate() }}
+            style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+          >
+            <input
+              autoFocus
+              value={createName}
+              placeholder={label('createBranchPlaceholder', 'New branch name')}
+              aria-label={label('createBranchPlaceholder', 'New branch name')}
+              onChange={(e) => { setCreateName(e.target.value); setCreateError(null) }}
+              style={{
+                border: '1px solid var(--dsw-alias-border-l2)',
+                borderRadius: '8px',
+                background: 'transparent',
+                padding: '6px 10px',
+                font: 'inherit',
+                fontSize: '14px',
+                lineHeight: '22px',
+                color: 'var(--dsw-alias-label-primary)',
+                outline: 'none',
+              }}
+            />
+            {createError !== null ? (
+              <div style={{ color: 'var(--dsw-alias-state-error-primary)', fontSize: '13px', lineHeight: '18px' }}>
+                {label('createBranchFailed', 'Create branch failed')}: {createError}
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                type="submit"
+                disabled={createBusy || createName.trim() === ''}
+                style={{
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '5px 14px',
+                  background: 'var(--dsw-alias-interactive-bg-hover)',
+                  color: 'var(--dsw-alias-label-primary)',
+                  font: 'inherit',
+                  fontSize: '14px',
+                  cursor: createBusy || createName.trim() === '' ? 'default' : 'pointer',
+                  opacity: createBusy || createName.trim() === '' ? 0.5 : 1,
+                }}
+              >
+                {createBusy ? label('loading', 'Loading…') : label('createBranchConfirm', 'Create')}
+              </button>
+            </div>
+          </form>
+        </Modal>
       ) : null}
     </span>
   )

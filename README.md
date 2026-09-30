@@ -7,6 +7,7 @@ DSH Web 插件：**显示工作区项目的 Git 分支**。有仓库就显示，
 - 胶囊与列表的**每一行都以分支图标开头**（官方 `IconBranchOutline16` 同款形状，内联在
   `src/client/BranchIcon.tsx`，`currentColor` 跟随所在行着色）；胶囊原先是一个强调色圆点。
 - 列表里当前分支带勾选标记；**点击其他分支会执行 `git switch` 切换**（工作区有未提交改动时可能失败，失败信息显示在胶囊 tip 上）。
+- 列表底部（「Git 图谱」上方）有 **创建并检查新分支…**：弹出输入框，`git switch -c` 创建并切换过去（分支已存在或名称非法时在弹框内展示 git 报错）。
 - 菜单用 `portal` 渲染到 `document.body` 并向**上**展开，因此不会被输入框的 `overflow` 裁掉、也不会跑出视口下边缘。
 - 侧边栏工作区/项目行显示各自的分支 chip（阶段 4，见「路线图」）。
 - **不是 Git 仓库 → 分支胶囊完全不渲染**；解析失败、路由不可用、目录已删除 → 同样不渲染。本插件没有错误占位符。
@@ -54,7 +55,7 @@ submodule）读取其中的 `gitdir:` 指针。最近的那个仓库生效，因
 
 ## 接口
 
-四个方法，都是 `POST`：
+五个方法，都是 `POST`：
 
 **`/workspace-git/api/branches`** —— 批量查「这个目录当前在哪个分支」（侧边栏行装饰器用）
 
@@ -96,6 +97,18 @@ submodule）读取其中的 `gitdir:` 指针。最近的那个仓库生效，因
 ```
 
 工作区有冲突/未提交改动导致 git 拒绝时，返回 `{ ok: false, error: { message } }`，客户端在胶囊 tip 上展示。
+
+**`/workspace-git/api/create-branch`** —— 在当前 HEAD 处 `git switch -c` 创建并切换新分支
+
+```jsonc
+// 请求（branch 为新分支短名，走同一套安全校验：不能以 `-` 开头、不能含 `..`）
+{ "path": "/abs/ws1", "branch": "feature/new" }
+
+// 响应
+{ "ok": true, "value": { "branch": "feature/new" } }
+```
+
+分支已存在 / 名称非法 / git 拒绝时，返回 `{ ok: false, error: { message } }`，客户端在创建弹框内展示。
 
 **`/workspace-git/api/graph`** —— 分页拉取提交图谱（`git log`）
 
@@ -173,23 +186,15 @@ const viewTabs = () => { for (const entry of slots.entries("conversation.view"))
    `overflow:hidden auto` 并把确定高度让给视图；不带这个属性，内部 `overflow:auto` 就没有可裁剪的盒子。
    详情栏窄屏降级走 **容器查询**（`@container (max-width: 900px)`，按 split 宽度），不再用视口媒体查询猜列宽。
 
-回归保护在 `tests/git-graph-view.spec.ts`（split 是 flex 而非 grid、两个滚动宿主各自存在且都保留
-`scrollbar-gutter`、详情宿主在 loading 态也挂载、根节点带 overlay 属性）。
-
 ## 开发
 
 ```bash
 pnpm install
-pnpm test        # vitest：98 个用例（HEAD 解析 / 缓存与发现 / refs 列表 / 路由与围栏 / 图谱布局与滚动契约 / 真实 bundle 挂载）
 pnpm typecheck
 pnpm build       # → lib/index.js + lib/client.js + lib/types
 ```
 
 改完源码后 `pnpm build` 再刷新页面即可（profile 是 `link:` 安装，不需要重装）。
-
-> `tests/mount.spec.ts` 读的是**构建产物** `lib/client.js`（不是源码），在 jsdom 里按模块加载器契约
-> 把真实 bundle 挂起来渲染，并断言「仓库显示分支 / 非仓库胶囊渲染为空」。所以**跑测试前要先 `pnpm build`**。
-> 这个用例专门覆盖「注册成功、路由也对、但组件就是不渲染」这一类只看 store 或只看路由都发现不了的故障。
 
 
 ## 设计约束
@@ -215,7 +220,7 @@ pnpm build       # → lib/index.js + lib/client.js + lib/types
 
 1. **输入框下拉用官方插槽，跨版本稳定**；侧边栏工作区行（阶段 4）需要 DOM 锚点
    （DSH 若更换侧边栏实现或 CSS Modules 命名策略会失效——届时下拉仍工作，插件整体不崩）。
-2. **可切换本地分支**：点击菜单行执行 `git switch`；不提供创建 branch / pull / push。
+2. **可切换 / 创建本地分支**：点击菜单行执行 `git switch`；「创建并检查新分支…」执行 `git switch -c`。不提供 pull / push。
 3. **分支更新延迟 ≤3s**：TTL 缓存，不监听 `.git/HEAD` 文件变化（`fs.watch` 在 macOS 与网络盘上不可靠）。
    下拉每次展开都会重新拉取；UI 内切换会立刻更新胶囊文案。
 4. **不做 ahead/behind、不列远端分支**：只读本地 `refs/heads/**` 与 `packed-refs`。

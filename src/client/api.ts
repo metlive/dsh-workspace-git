@@ -147,3 +147,29 @@ export async function checkoutBranch(
   }
   return readEnvelope<CheckoutResult>(response)
 }
+
+/**
+ * Create `branch` at HEAD and check it out in the work tree at `path`.
+ * @param path - the absolute workspace directory.
+ * @param branch - short local branch name for the new branch.
+ * @param signal - abort signal.
+ * @returns the branch now checked out.
+ */
+export async function createBranch(
+  path: string,
+  branch: string,
+  signal?: AbortSignal,
+): Promise<CheckoutResult> {
+  let response: Response
+  try {
+    response = await fetch('/workspace-git/api/create-branch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path, branch }),
+      signal,
+    })
+  } catch (error) {
+    throw new WorkspaceGitApiError('network', error instanceof Error ? error.message : String(error))
+  }
+  return readEnvelope<CheckoutResult>(response)
+}

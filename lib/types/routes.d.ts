@@ -90,6 +90,15 @@ export declare function resolveCheckout(cache: BranchCache, payload: unknown): P
     branch: string;
 }>;
 /**
+ * Create and check out a new branch, then bust the branch cache.
+ * @param cache - the activation-scoped branch cache.
+ * @param payload - the parsed request body.
+ * @returns the branch now checked out.
+ */
+export declare function resolveCreateBranch(cache: BranchCache, payload: unknown): Promise<{
+    branch: string;
+}>;
+/**
  * Narrow a commit-detail request: absolute path + full object id.
  * @param payload - the parsed request body.
  */

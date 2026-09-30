@@ -30,6 +30,30 @@ export function assertSafeBranchName(branch: string): void {
 }
 
 /**
+ * Run one `git` command in the work tree, mapping a non-zero exit to a
+ * `bad-request` error that carries git's stderr (so the client can show it).
+ * @param workTree - absolute work-tree root.
+ * @param args - the argv after `git` (branch names are validated upstream).
+ * @param fallback - the message when git prints no stderr.
+ */
+async function runGit(workTree: string, args: readonly string[], fallback: string): Promise<void> {
+  try {
+    await execFileAsync('git', [...args], {
+      cwd: workTree,
+      encoding: 'utf8',
+      timeout: 30_000,
+      maxBuffer: 1 * 1024 * 1024,
+    })
+  } catch (error) {
+    const stderr = error !== null && typeof error === 'object' && 'stderr' in error
+      ? String((error as { stderr?: unknown }).stderr ?? '')
+      : ''
+    const message = (stderr.trim() || (error instanceof Error ? error.message : String(error))).trim()
+    throw new WorkspaceGitError('bad-request', message || fallback, 400)
+  }
+}
+
+/**
  * Checkout `branch` in the repository containing `path`.
  * @param path - absolute workspace path.
  * @param branch - short local branch name.
@@ -42,19 +66,24 @@ export async function checkoutBranch(path: string, branch: string): Promise<{ br
   if (workTree === undefined) {
     throw new WorkspaceGitError('bad-request', 'not a git repository', 400)
   }
-  try {
-    await execFileAsync('git', ['switch', '--', branch], {
-      cwd: workTree,
-      encoding: 'utf8',
-      timeout: 30_000,
-      maxBuffer: 1 * 1024 * 1024,
-    })
-  } catch (error) {
-    const stderr = error !== null && typeof error === 'object' && 'stderr' in error
-      ? String((error as { stderr?: unknown }).stderr ?? '')
-      : ''
-    const message = (stderr.trim() || (error instanceof Error ? error.message : String(error))).trim()
-    throw new WorkspaceGitError('bad-request', message || `failed to switch to "${branch}"`, 400)
+  await runGit(workTree, ['switch', '--', branch], `failed to switch to "${branch}"`)
+  return { branch }
+}
+
+/**
+ * Create `branch` at the current HEAD and check it out (`git switch -c`).
+ * @param path - absolute workspace path.
+ * @param branch - short local branch name for the new branch.
+ * @returns the branch that is now checked out.
+ * @throws WorkspaceGitError when the path is not a repo, the name is unsafe,
+ *   or git rejects the create (e.g. the branch already exists).
+ */
+export async function createBranch(path: string, branch: string): Promise<{ branch: string }> {
+  assertSafeBranchName(branch)
+  const workTree = await findWorkTree(path)
+  if (workTree === undefined) {
+    throw new WorkspaceGitError('bad-request', 'not a git repository', 400)
   }
+  await runGit(workTree, ['switch', '-c', branch], `failed to create "${branch}"`)
   return { branch }
 }
