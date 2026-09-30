@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Workspace Git",
+    "description": "Show the Git branch of each workspace/project (and the current session) in the web UI."
+  }
+}

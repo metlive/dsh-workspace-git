@@ -1,7 +1,8 @@
 {
-  "name": "dsh-workspace-git",
+  "name": "Git 插件",
   "version": "0.1.0",
-  "description": "DSH plugin: show the git branch of each workspace/project (and of the current session) in the web UI. Silent when the directory is not a git repository.",
+  "description": "DSH 插件：在 Web 界面显示每个工作区/项目（以及当前会话）所在的 Git 分支；目录不是 Git 仓库时静默不显示。",
+  "icon": "icon.svg",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -14,7 +15,8 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*": "./locale/*"
   },
   "engines": {
     "node": ">=20"
@@ -37,6 +39,8 @@
     "lib/types/**/*.d.ts",
     "src",
     "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
     "README.md"
   ],
   "license": "MIT",
