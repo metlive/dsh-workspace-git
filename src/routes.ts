@@ -1,0 +1,268 @@
+/**
+ * The plugin's fenced host routes under `POST /workspace-git/api/*`.
+ *
+ * - `branches` — batch current-branch lookup (file-based, no git binary)
+ * - `refs` — local branch list for the composer menu
+ * - `graph` — commit-graph page via `git log` (needs a git binary)
+ * - `commit` — one commit's message + changed files (detail panel)
+ * - `checkout` — switch the work tree to a local branch (`git switch`)
+ */
+import { isAbsolute } from 'node:path'
+import { MAX_PATHS_PER_REQUEST, type BranchCache } from './git-branch.ts'
+import { checkoutBranch } from './git-checkout.ts'
+import { fetchCommitDetail, type GitCommitDetail } from './git-commit-detail.ts'
+import { DEFAULT_GRAPH_PAGE_SIZE, MAX_GRAPH_PAGE_SIZE, fetchCommitGraph, type GitGraphSnapshot } from './git-graph.ts'
+import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts'
+import { WorkspaceGitError, readJsonBody, writeError, writeOk } from './wire.ts'
+
+/** Route path prefix; the API method is the final segment. */
+export const API_PREFIX = '/workspace-git/api'
+
+/** One branch answer as the wire carries it. */
+export interface BranchAnswer {
+  /** The branch name, a short id when detached, or null when there is none. */
+  branch: string | null
+  /** Whether HEAD is detached (the client renders those differently). */
+  detached: boolean
+}
+
+/** The `branches` method's result. */
+export interface BranchesResult {
+  branches: Record<string, BranchAnswer>
+}
+
+/** One branch row as the menu consumes it. */
+export interface RefAnswer {
+  /** The short branch name. */
+  name: string
+  /** Whether HEAD currently points at it. */
+  current: boolean
+}
+
+/** The `refs` method's result: the local branch list of one repository. */
+export interface RefsResult {
+  /** Whether HEAD is detached (the list is still shown; no row is current). */
+  detached: boolean
+  /** The sorted local branch names. */
+  refs: RefAnswer[]
+}
+
+/**
+ * Narrow an unknown payload to a bounded list of absolute paths.
+ * @param payload - the parsed request body.
+ * @returns the validated paths.
+ */
+export function parseBranchesRequest(payload: unknown): string[] {
+  const record = payload as { paths?: unknown } | null
+  const paths = record?.paths
+  if (!Array.isArray(paths)) {
+    throw new WorkspaceGitError('bad-request', 'paths must be an array')
+  }
+  if (paths.length > MAX_PATHS_PER_REQUEST) {
+    throw new WorkspaceGitError('bad-request', `paths must contain at most ${MAX_PATHS_PER_REQUEST} entries`)
+  }
+  const validated: string[] = []
+  for (const entry of paths) {
+    if (typeof entry !== 'string' || entry === '') {
+      throw new WorkspaceGitError('bad-request', 'every path must be a non-empty string')
+    }
+    if (!isAbsolute(entry)) {
+      throw new WorkspaceGitError('bad-request', `path "${entry}" is not absolute`)
+    }
+    if (!validated.includes(entry)) validated.push(entry)
+  }
+  return validated
+}
+
+/**
+ * Resolve the branch answers for one payload.
+ * @param cache - the activation-scoped branch cache.
+ * @param payload - the parsed request body.
+ * @returns the per-path answer map.
+ */
+export async function resolveBranches(cache: BranchCache, payload: unknown): Promise<BranchesResult> {
+  const paths = parseBranchesRequest(payload)
+  const heads = await cache.headsOf(paths)
+  const branches: Record<string, BranchAnswer> = {}
+  for (const { path, head } of heads) {
+    branches[path] = head === undefined
+      ? { branch: null, detached: false }
+      : { branch: head.branch, detached: head.detached }
+  }
+  return { branches }
+}
+
+/**
+ * Narrow an unknown payload to the single absolute path the ref list is for.
+ * @param payload - the parsed request body.
+ * @returns the validated path.
+ */
+export function parseRefsRequest(payload: unknown): string {
+  const record = payload as { path?: unknown } | null
+  const path = record?.path
+  if (typeof path !== 'string' || path === '') {
+    throw new WorkspaceGitError('bad-request', 'path must be a non-empty string')
+  }
+  if (!isAbsolute(path)) {
+    throw new WorkspaceGitError('bad-request', `path "${path}" is not absolute`)
+  }
+  return path
+}
+
+/**
+ * Resolve the branch list of one repository.
+ * @param cache - the activation-scoped branch cache.
+ * @param payload - the parsed request body.
+ * @returns the branch list (empty for a directory that is not a repository).
+ */
+export async function resolveRefs(cache: BranchCache, payload: unknown): Promise<RefsResult> {
+  const path = parseRefsRequest(payload)
+  const refs = await cache.refsOf(path)
+  return {
+    detached: refs.length > 0 && !refs.some(entry => entry.current),
+    refs: refs.map(entry => ({ name: entry.name, current: entry.current })),
+  }
+}
+
+/**
+ * Narrow a graph request: absolute path plus optional pagination.
+ * @param payload - the parsed request body.
+ * @returns path / maxCount / skip.
+ */
+export function parseGraphRequest(payload: unknown): { path: string; maxCount: number; skip: number } {
+  const record = payload as { path?: unknown; maxCount?: unknown; skip?: unknown } | null
+  const path = parseRefsRequest(record)
+  let maxCount = DEFAULT_GRAPH_PAGE_SIZE
+  if (record?.maxCount !== undefined) {
+    if (typeof record.maxCount !== 'number' || !Number.isFinite(record.maxCount)) {
+      throw new WorkspaceGitError('bad-request', 'maxCount must be a number')
+    }
+    maxCount = Math.min(MAX_GRAPH_PAGE_SIZE, Math.max(1, Math.floor(record.maxCount)))
+  }
+  let skip = 0
+  if (record?.skip !== undefined) {
+    if (typeof record.skip !== 'number' || !Number.isFinite(record.skip)) {
+      throw new WorkspaceGitError('bad-request', 'skip must be a number')
+    }
+    skip = Math.max(0, Math.floor(record.skip))
+  }
+  return { path, maxCount, skip }
+}
+
+/**
+ * Resolve one page of the commit graph.
+ * @param payload - the parsed request body.
+ * @returns the graph page.
+ */
+export async function resolveGraph(payload: unknown): Promise<GitGraphSnapshot> {
+  const { path, maxCount, skip } = parseGraphRequest(payload)
+  return fetchCommitGraph(path, maxCount, skip)
+}
+
+/**
+ * Narrow a checkout request: absolute path + local branch name.
+ * @param payload - the parsed request body.
+ * @returns path and branch.
+ */
+export function parseCheckoutRequest(payload: unknown): { path: string; branch: string } {
+  const record = payload as { path?: unknown; branch?: unknown } | null
+  const path = parseRefsRequest(record)
+  const branch = record?.branch
+  if (typeof branch !== 'string' || branch === '') {
+    throw new WorkspaceGitError('bad-request', 'branch must be a non-empty string')
+  }
+  return { path, branch }
+}
+
+/**
+ * Switch the work tree to the requested branch and bust the branch cache.
+ * @param cache - the activation-scoped branch cache.
+ * @param payload - the parsed request body.
+ * @returns the branch now checked out.
+ */
+export async function resolveCheckout(
+  cache: BranchCache,
+  payload: unknown,
+): Promise<{ branch: string }> {
+  const { path, branch } = parseCheckoutRequest(payload)
+  const result = await checkoutBranch(path, branch)
+  cache.invalidate(path)
+  return result
+}
+
+/**
+ * Narrow a commit-detail request: absolute path + full object id.
+ * @param payload - the parsed request body.
+ */
+export function parseCommitRequest(payload: unknown): { path: string; hash: string } {
+  const record = payload as { path?: unknown; hash?: unknown } | null
+  const path = parseRefsRequest(record)
+  const hash = record?.hash
+  if (typeof hash !== 'string' || hash === '') {
+    throw new WorkspaceGitError('bad-request', 'hash must be a non-empty string')
+  }
+  return { path, hash }
+}
+
+/**
+ * Resolve one commit's detail payload for the graph side panel.
+ * @param payload - the parsed request body.
+ */
+export async function resolveCommit(payload: unknown): Promise<GitCommitDetail> {
+  const { path, hash } = parseCommitRequest(payload)
+  return fetchCommitDetail(path, hash)
+}
+
+/**
+ * Build the route handler.
+ * @param cache - the activation-scoped branch cache.
+ * @param fence - browser-trust predicate.
+ * @returns the route handler.
+ */
+export function createApiHandler(
+  cache: BranchCache,
+  fence: (req: PluginHttpRequest) => boolean,
+): (req: PluginHttpRequest, res: PluginHttpResponse) => Promise<void> {
+  return async (req, res): Promise<void> => {
+    if (!fence(req)) {
+      writeError(res, new WorkspaceGitError('forbidden', 'forbidden', 403))
+      return
+    }
+    if (req.method !== 'POST') {
+      writeError(res, new WorkspaceGitError('method-error', 'method not allowed', 405))
+      return
+    }
+    const pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
+    const method = pathname.startsWith(`${API_PREFIX}/`) ? pathname.slice(API_PREFIX.length + 1) : undefined
+    if (method === undefined || method.includes('/')) {
+      writeError(res, new WorkspaceGitError('bad-request', 'unknown workspace-git API method', 404))
+      return
+    }
+    try {
+      const payload = await readJsonBody(req)
+      if (method === 'branches') {
+        writeOk(res, await resolveBranches(cache, payload))
+        return
+      }
+      if (method === 'refs') {
+        writeOk(res, await resolveRefs(cache, payload))
+        return
+      }
+      if (method === 'graph') {
+        writeOk(res, await resolveGraph(payload))
+        return
+      }
+      if (method === 'commit') {
+        writeOk(res, await resolveCommit(payload))
+        return
+      }
+      if (method === 'checkout') {
+        writeOk(res, await resolveCheckout(cache, payload))
+        return
+      }
+      throw new WorkspaceGitError('bad-request', `unknown workspace-git API method "${method}"`, 404)
+    } catch (error) {
+      writeError(res, error)
+    }
+  }
+}
