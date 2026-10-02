@@ -69,38 +69,65 @@ export declare function parseGitDirPointer(pointerText: string): string | undefi
  * @returns the head to show, or undefined when there are none.
  */
 export declare function preferBranch(heads: readonly (GitHead | undefined)[]): GitHead | undefined;
+/** Whether a listed ref is a local branch or a remote-tracking branch. */
+export type GitRefKind = 'local' | 'remote';
+/**
+ * One candidate name before merge/sort — from a loose ref file or packed-refs.
+ *
+ * `mtimeMs` is only known for loose refs (the file's mtime); packed entries
+ * omit it and sort after any same-kind entry that has a stamp.
+ */
+export interface GitRefCandidate {
+    /** Display name: local short name, or `origin/feature` for remotes. */
+    readonly name: string;
+    /** Local vs remote-tracking. */
+    readonly kind: GitRefKind;
+    /** Loose-ref file mtime in ms, when known. */
+    readonly mtimeMs?: number;
+}
 /** One entry of a repository's ref list. */
 export interface GitRefEntry {
     /** The short branch name, as it should be displayed. */
     readonly name: string;
+    /** Local vs remote-tracking. */
+    readonly kind: GitRefKind;
     /** Whether this is the branch HEAD currently points at. */
     readonly current: boolean;
 }
 /**
- * Extract the local branch names from a `packed-refs` file.
+ * Whether a remote-tracking name is the remote's symbolic HEAD (`origin/HEAD`),
+ * which is not useful in a branch picker.
+ * @param name - the name under `refs/remotes/` (e.g. `origin/HEAD`).
+ */
+export declare function isRemoteHeadRef(name: string): boolean;
+/**
+ * Extract local and remote-tracking branch names from a `packed-refs` file.
  *
  * `packed-refs` is git's compaction of `refs/` into one file: a header line
  * (`# pack-refs with: …`), optional `^<sha>` peeled-tag lines that belong to the
- * line above them, and `<sha> <refname>` rows. Only `refs/heads/*` rows are
- * branches; tags and remotes are ignored.
+ * line above them, and `<sha> <refname>` rows. Tags are ignored; remote
+ * symbolic HEAD refs (names ending in `/HEAD`) are skipped.
  *
- * A loose ref file under `refs/heads/` always overrides its packed entry, so the
- * caller merges the two — but for LISTING purposes a duplicate name is harmless
- * and de-duplication happens in {@link mergeRefNames}.
+ * A loose ref file always overrides its packed entry, so the caller merges the
+ * two — but for LISTING purposes a duplicate name is harmless and de-duplication
+ * happens in {@link mergeRefNames}.
  * @param text - the raw `packed-refs` contents.
- * @returns the branch names found, in file order.
+ * @returns the candidates found, in file order.
  */
-export declare function parsePackedRefs(text: string): string[];
+export declare function parsePackedRefs(text: string): GitRefCandidate[];
 /**
- * Merge loose and packed branch names into one display list.
+ * Merge loose and packed ref candidates into one display list.
  *
- * Loose refs win on duplicates (they are the newer spelling), the current
- * branch is flagged rather than reordered — a branch list that jumps around
- * after a checkout is worse than one that does not — and the result is sorted
- * so the menu is stable between polls.
- * @param loose - branch names from loose ref files.
- * @param packed - branch names from `packed-refs`.
- * @param current - the checked-out branch name, when HEAD is not detached.
- * @returns the sorted, de-duplicated list.
+ * Loose refs win on duplicates (they are the newer spelling). Within each
+ * kind, entries sort by loose mtime descending (most recently touched first),
+ * then by name — so the menu's default "recent" window is stable and useful.
+ * Locals are listed before remotes in the flat array; the UI groups them.
+ *
+ * The current local branch is flagged rather than force-reordered: the client
+ * keeps it visible when truncating to the recent window.
+ * @param loose - candidates from loose ref files (may carry mtime).
+ * @param packed - candidates from `packed-refs`.
+ * @param current - the checked-out local branch name, when HEAD is not detached.
+ * @returns the de-duplicated, sorted list.
  */
-export declare function mergeRefNames(loose: readonly string[], packed: readonly string[], current: string | undefined): GitRefEntry[];
+export declare function mergeRefNames(loose: readonly GitRefCandidate[], packed: readonly GitRefCandidate[], current: string | undefined): GitRefEntry[];

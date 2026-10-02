@@ -16,7 +16,17 @@
  */
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { mergeRefNames, parseGitDirPointer, parseHead, parsePackedRefs, type GitHead, type GitRefEntry } from './git-ref.ts'
+import {
+  isRemoteHeadRef,
+  mergeRefNames,
+  parseGitDirPointer,
+  parseHead,
+  parsePackedRefs,
+  type GitHead,
+  type GitRefCandidate,
+  type GitRefEntry,
+  type GitRefKind,
+} from './git-ref.ts'
 
 /**
  * How long a resolved answer stays fresh. Long enough that a streaming chat
@@ -150,12 +160,46 @@ async function readDirNames(dir: string): Promise<string[]> {
 }
 
 /**
- * List the local branches of the repository containing `path`.
+ * Walk one refs tree (heads or remotes) into loose candidates with mtimes.
+ * @param root - absolute path of `refs/heads` or `refs/remotes`.
+ * @param kind - local vs remote-tracking.
+ * @returns loose candidates found under the tree.
+ */
+async function walkLooseRefs(root: string, kind: GitRefKind): Promise<GitRefCandidate[]> {
+  const loose: GitRefCandidate[] = []
+  const walk = async (dir: string, prefix: string, depth: number): Promise<void> => {
+    // A branch name deeper than this is pathological; stop rather than recurse
+    // without bound on a hand-corrupted refs tree.
+    if (depth > MAX_REF_DEPTH) return
+    for (const entry of await readDirNames(dir)) {
+      const full = join(dir, entry)
+      const name = prefix === '' ? entry : `${prefix}/${entry}`
+      try {
+        const info = await stat(full)
+        if (info.isDirectory()) {
+          await walk(full, name, depth + 1)
+        } else if (info.isFile()) {
+          if (kind === 'remote' && isRemoteHeadRef(name)) continue
+          loose.push({ name, kind, mtimeMs: info.mtimeMs })
+        }
+      } catch {
+        // A ref that vanished mid-walk is simply not listed.
+      }
+    }
+  }
+  await walk(root, '', 0)
+  return loose
+}
+
+/**
+ * List the local and remote-tracking branches of the repository containing
+ * `path`.
  *
  * Branches live in two places, and a repository may use either or both: loose
- * files under `.git/refs/heads/` (possibly nested, since a branch name may
- * contain slashes) and the compacted `.git/packed-refs`. Both are read; a
- * freshly created branch is loose, and an old clone's branches are packed.
+ * files under `.git/refs/heads/` / `.git/refs/remotes/` (possibly nested, since
+ * a branch name may contain slashes) and the compacted `.git/packed-refs`. Both
+ * are read; a freshly created branch is loose, and an old clone's branches are
+ * packed. Loose mtimes drive the "recent" order the menu truncates against.
  *
  * Returns an empty list for anything that is not a repository or cannot be read
  * — the caller renders no menu rather than an error.
@@ -170,25 +214,10 @@ async function findRefs(path: string): Promise<GitRefEntry[]> {
   const head = headText === undefined ? undefined : parseHead(headText)
   const current = head !== undefined && !head.detached ? head.branch : undefined
 
-  // Loose refs, walking the refs/heads tree (branch names may be nested).
-  const loose: string[] = []
-  const walk = async (dir: string, prefix: string, depth: number): Promise<void> => {
-    // A branch name deeper than this is pathological; stop rather than recurse
-    // without bound on a hand-corrupted refs tree.
-    if (depth > MAX_REF_DEPTH) return
-    for (const entry of await readDirNames(dir)) {
-      const full = join(dir, entry)
-      const name = prefix === '' ? entry : `${prefix}/${entry}`
-      try {
-        const info = await stat(full)
-        if (info.isDirectory()) await walk(full, name, depth + 1)
-        else if (info.isFile()) loose.push(name)
-      } catch {
-        // A ref that vanished mid-walk is simply not listed.
-      }
-    }
-  }
-  await walk(join(gitDir, 'refs', 'heads'), '', 0)
+  const loose = [
+    ...await walkLooseRefs(join(gitDir, 'refs', 'heads'), 'local'),
+    ...await walkLooseRefs(join(gitDir, 'refs', 'remotes'), 'remote'),
+  ]
 
   const packedText = await readIfPossible(join(gitDir, 'packed-refs'))
   const packed = packedText === undefined ? [] : parsePackedRefs(packedText)

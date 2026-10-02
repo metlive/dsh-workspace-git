@@ -2,10 +2,10 @@
  * The plugin's fenced host routes under `POST /workspace-git/api/*`.
  *
  * - `branches` — batch current-branch lookup (file-based, no git binary)
- * - `refs` — local branch list for the composer menu
+ * - `refs` — local + remote branch list for the composer menu
  * - `graph` — commit-graph page via `git log` (needs a git binary)
  * - `commit` — one commit's message + changed files (detail panel)
- * - `checkout` — switch the work tree to a local branch (`git switch`)
+ * - `checkout` — switch the work tree to a local or remote-tracking branch
  * - `create-branch` — create + check out a new branch (`git switch -c`)
  */
 import { isAbsolute } from 'node:path'
@@ -13,6 +13,7 @@ import { MAX_PATHS_PER_REQUEST, type BranchCache } from './git-branch.ts'
 import { checkoutBranch, createBranch } from './git-checkout.ts'
 import { fetchCommitDetail, type GitCommitDetail } from './git-commit-detail.ts'
 import { DEFAULT_GRAPH_PAGE_SIZE, MAX_GRAPH_PAGE_SIZE, fetchCommitGraph, type GitGraphSnapshot } from './git-graph.ts'
+import type { GitRefKind } from './git-ref.ts'
 import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts'
 import { WorkspaceGitError, readJsonBody, writeError, writeOk } from './wire.ts'
 
@@ -34,17 +35,19 @@ export interface BranchesResult {
 
 /** One branch row as the menu consumes it. */
 export interface RefAnswer {
-  /** The short branch name. */
+  /** The short branch name (`main`) or remote-tracking name (`origin/main`). */
   name: string
-  /** Whether HEAD currently points at it. */
+  /** Whether HEAD currently points at it (only ever true for local refs). */
   current: boolean
+  /** Local vs remote-tracking — drives menu grouping. */
+  kind: GitRefKind
 }
 
-/** The `refs` method's result: the local branch list of one repository. */
+/** The `refs` method's result: local + remote branches of one repository. */
 export interface RefsResult {
   /** Whether HEAD is detached (the list is still shown; no row is current). */
   detached: boolean
-  /** The sorted local branch names. */
+  /** Recent-sorted refs (locals first, then remotes). */
   refs: RefAnswer[]
 }
 
@@ -121,7 +124,7 @@ export async function resolveRefs(cache: BranchCache, payload: unknown): Promise
   const refs = await cache.refsOf(path)
   return {
     detached: refs.length > 0 && !refs.some(entry => entry.current),
-    refs: refs.map(entry => ({ name: entry.name, current: entry.current })),
+    refs: refs.map(entry => ({ name: entry.name, current: entry.current, kind: entry.kind })),
   }
 }
 
@@ -161,18 +164,23 @@ export async function resolveGraph(payload: unknown): Promise<GitGraphSnapshot> 
 }
 
 /**
- * Narrow a checkout request: absolute path + local branch name.
+ * Narrow a checkout request: absolute path + branch name + optional kind.
  * @param payload - the parsed request body.
- * @returns path and branch.
+ * @returns path, branch, and kind (defaults to local).
  */
-export function parseCheckoutRequest(payload: unknown): { path: string; branch: string } {
-  const record = payload as { path?: unknown; branch?: unknown } | null
+export function parseCheckoutRequest(payload: unknown): {
+  path: string
+  branch: string
+  kind: GitRefKind
+} {
+  const record = payload as { path?: unknown; branch?: unknown; kind?: unknown } | null
   const path = parseRefsRequest(record)
   const branch = record?.branch
   if (typeof branch !== 'string' || branch === '') {
     throw new WorkspaceGitError('bad-request', 'branch must be a non-empty string')
   }
-  return { path, branch }
+  const kind: GitRefKind = record?.kind === 'remote' ? 'remote' : 'local'
+  return { path, branch, kind }
 }
 
 /**
@@ -185,8 +193,8 @@ export async function resolveCheckout(
   cache: BranchCache,
   payload: unknown,
 ): Promise<{ branch: string }> {
-  const { path, branch } = parseCheckoutRequest(payload)
-  const result = await checkoutBranch(path, branch)
+  const { path, branch, kind } = parseCheckoutRequest(payload)
+  const result = await checkoutBranch(path, branch, kind)
   cache.invalidate(path)
   return result
 }

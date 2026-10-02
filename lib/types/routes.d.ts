@@ -1,6 +1,7 @@
 import { type BranchCache } from './git-branch.ts';
 import { type GitCommitDetail } from './git-commit-detail.ts';
 import { type GitGraphSnapshot } from './git-graph.ts';
+import type { GitRefKind } from './git-ref.ts';
 import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts';
 /** Route path prefix; the API method is the final segment. */
 export declare const API_PREFIX = "/workspace-git/api";
@@ -17,16 +18,18 @@ export interface BranchesResult {
 }
 /** One branch row as the menu consumes it. */
 export interface RefAnswer {
-    /** The short branch name. */
+    /** The short branch name (`main`) or remote-tracking name (`origin/main`). */
     name: string;
-    /** Whether HEAD currently points at it. */
+    /** Whether HEAD currently points at it (only ever true for local refs). */
     current: boolean;
+    /** Local vs remote-tracking — drives menu grouping. */
+    kind: GitRefKind;
 }
-/** The `refs` method's result: the local branch list of one repository. */
+/** The `refs` method's result: local + remote branches of one repository. */
 export interface RefsResult {
     /** Whether HEAD is detached (the list is still shown; no row is current). */
     detached: boolean;
-    /** The sorted local branch names. */
+    /** Recent-sorted refs (locals first, then remotes). */
     refs: RefAnswer[];
 }
 /**
@@ -72,13 +75,14 @@ export declare function parseGraphRequest(payload: unknown): {
  */
 export declare function resolveGraph(payload: unknown): Promise<GitGraphSnapshot>;
 /**
- * Narrow a checkout request: absolute path + local branch name.
+ * Narrow a checkout request: absolute path + branch name + optional kind.
  * @param payload - the parsed request body.
- * @returns path and branch.
+ * @returns path, branch, and kind (defaults to local).
  */
 export declare function parseCheckoutRequest(payload: unknown): {
     path: string;
     branch: string;
+    kind: GitRefKind;
 };
 /**
  * Switch the work tree to the requested branch and bust the branch cache.

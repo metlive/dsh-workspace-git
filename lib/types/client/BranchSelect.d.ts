@@ -1,20 +1,23 @@
 /**
  * The composer's branch selector: a pill at the right of the chat input row
  * showing the workspace's current branch, opening a searchable list of the
- * repository's local branches plus a "Git Graph" footer action.
+ * repository's local and remote-tracking branches plus a "Git Graph" footer
+ * action.
  *
  * Layout mirrors the shell's branch picker card:
  *   1. search field at the top ("搜索分支")
- *   2. "分支" heading + filtered local refs
- *   3. "Git 图谱" footer (no create-branch row)
+ *   2. "本地分支" / "远程分支" headings + filtered refs (default: 10 most
+ *      recent per group; search raises the cap)
+ *   3. create-branch + "Git 图谱" footer
  *
  * Both the pill and every row of its list lead with the branch glyph
  * ({@link BranchIcon}), so a branch is recognizable as one before its name is
  * read.
  *
- * Picking a branch runs `git switch` via the host checkout route and updates
- * the displayed HEAD. Clicking the already-current branch only closes the menu.
- * "Git Graph" opens the in-plugin commit-graph dialog.
+ * Picking a local branch runs `git switch`; picking a remote-tracking ref
+ * creates or reuses a local tracking branch. Clicking the already-current
+ * branch only closes the menu. "Git Graph" opens the in-plugin commit-graph
+ * dialog.
  *
  * The trigger renders NOTHING when there is no branch to show (no session cwd,
  * a directory that is not a repository, a host route that failed). The input

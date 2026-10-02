@@ -2,11 +2,12 @@
 
 DSH Web 插件：**显示工作区项目的 Git 分支**。有仓库就显示，没有就什么都不显示。
 
-- **选择模式右侧**一个分支胶囊，点击展开该仓库的本地分支列表（官方插槽 `conversation.input.left`）。
+- **选择模式右侧**一个分支胶囊，点击展开该仓库的**本地 + 远程**分支列表（官方插槽 `conversation.input.left`）。
 - 会话视图环「轨迹」右侧注册 **Git 图谱** 标签（`conversation.view` / `workspace-git-graph` / order 20）；有 HEAD（含游离）时展示详细提交列表，非仓库时显示**空态说明文案**（标签环显隐由 shell 决定，见「Git 图谱」一节）。
 - 胶囊与列表的**每一行都以分支图标开头**（官方 `IconBranchOutline16` 同款形状，内联在
   `src/client/BranchIcon.tsx`，`currentColor` 跟随所在行着色）；胶囊原先是一个强调色圆点。
-- 列表里当前分支带勾选标记；**点击其他分支会执行 `git switch` 切换**（工作区有未提交改动时可能失败，失败信息显示在胶囊 tip 上）。
+- 列表按「本地分支 / 远程分支」分组；默认每组展示**最近 10 个**（按松散 ref 的 mtime）；搜索时放宽上限。
+- 列表里当前分支带勾选标记；**点击本地分支会执行 `git switch` 切换**；**点击远程分支会 `git switch --track`**（已有同名本地分支则直接切过去）。工作区有未提交改动时可能失败，失败信息显示在胶囊 tip 上。
 - 列表底部（「Git 图谱」上方）有 **创建并检查新分支…**：弹出输入框，`git switch -c` 创建并切换过去（分支已存在或名称非法时在弹框内展示 git 报错）。
 - 菜单用 `portal` 渲染到 `document.body` 并向**上**展开，因此不会被输入框的 `overflow` 裁掉、也不会跑出视口下边缘。
 - 侧边栏工作区/项目行显示各自的分支 chip（阶段 4，见「路线图」）。
@@ -70,29 +71,36 @@ submodule）读取其中的 `gitdir:` 指针。最近的那个仓库生效，因
 } } }
 ```
 
-**`/workspace-git/api/refs`** —— 查一个仓库的本地分支列表（下拉菜单用，仅展开时调用）
+**`/workspace-git/api/refs`** —— 查一个仓库的本地 + 远程分支列表（下拉菜单用，仅展开时调用）
 
 ```jsonc
 // 请求
 { "path": "/abs/ws1" }
 
-// 响应
+// 响应（按 kind 分组由客户端完成；数组内本地在前、远程在后，同组按松散 ref mtime 降序）
 { "ok": true, "value": {
   "detached": false,
-  "refs": [ { "name": "main", "current": true }, { "name": "feature/x", "current": false } ]
+  "refs": [
+    { "name": "main", "current": true, "kind": "local" },
+    { "name": "feature/x", "current": false, "kind": "local" },
+    { "name": "origin/main", "current": false, "kind": "remote" }
+  ]
 } }
 ```
 
-分支名来自两处并合并去重：`.git/refs/heads/**`（松散 ref，支持 `feature/x` 这类嵌套名）与
+分支名来自两处并合并去重：`.git/refs/heads/**` + `.git/refs/remotes/**`（松散 ref，支持嵌套名；跳过 `*/HEAD`）与
 `.git/packed-refs`（紧凑格式）。非仓库返回空列表。
 
-**`/workspace-git/api/checkout`** —— 在工作区执行 `git switch` 切换到指定本地分支
+**`/workspace-git/api/checkout`** —— 在工作区执行 `git switch`（本地）或 `git switch --track`（远程）
 
 ```jsonc
-// 请求
-{ "path": "/abs/ws1", "branch": "feature/x" }
+// 本地
+{ "path": "/abs/ws1", "branch": "feature/x", "kind": "local" }
 
-// 响应
+// 远程跟踪（已有同名本地分支则直接 switch；否则 --track 创建）
+{ "path": "/abs/ws1", "branch": "origin/feature/x", "kind": "remote" }
+
+// 响应（始终为最终检出的本地分支名）
 { "ok": true, "value": { "branch": "feature/x" } }
 ```
 

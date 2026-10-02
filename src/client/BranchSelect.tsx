@@ -1,20 +1,23 @@
 /**
  * The composer's branch selector: a pill at the right of the chat input row
  * showing the workspace's current branch, opening a searchable list of the
- * repository's local branches plus a "Git Graph" footer action.
+ * repository's local and remote-tracking branches plus a "Git Graph" footer
+ * action.
  *
  * Layout mirrors the shell's branch picker card:
  *   1. search field at the top ("搜索分支")
- *   2. "分支" heading + filtered local refs
- *   3. "Git 图谱" footer (no create-branch row)
+ *   2. "本地分支" / "远程分支" headings + filtered refs (default: 10 most
+ *      recent per group; search raises the cap)
+ *   3. create-branch + "Git 图谱" footer
  *
  * Both the pill and every row of its list lead with the branch glyph
  * ({@link BranchIcon}), so a branch is recognizable as one before its name is
  * read.
  *
- * Picking a branch runs `git switch` via the host checkout route and updates
- * the displayed HEAD. Clicking the already-current branch only closes the menu.
- * "Git Graph" opens the in-plugin commit-graph dialog.
+ * Picking a local branch runs `git switch`; picking a remote-tracking ref
+ * creates or reuses a local tracking branch. Clicking the already-current
+ * branch only closes the menu. "Git Graph" opens the in-plugin commit-graph
+ * dialog.
  *
  * The trigger renders NOTHING when there is no branch to show (no session cwd,
  * a directory that is not a repository, a host route that failed). The input
@@ -26,7 +29,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { checkoutBranch, createBranch, fetchRefs, WorkspaceGitApiError, type RefAnswer } from './api.ts'
+import { checkoutBranch, createBranch, fetchRefs, WorkspaceGitApiError, type RefAnswer, type RefKind } from './api.ts'
 import { BranchIcon } from './BranchIcon.tsx'
 import { GraphIcon } from './GraphIcon.tsx'
 import { NewBranchIcon } from './NewBranchIcon.tsx'
@@ -54,11 +57,38 @@ export interface BranchSelectProps {
 /** How long a switch-failure toast stays on the trigger, in milliseconds. */
 const ERROR_FEEDBACK_MS = 2_400
 
-/** Bound on the branch list the menu renders, so a huge repo cannot flood the DOM. */
-const MAX_VISIBLE_REFS = 200
+/**
+ * Default visible rows per group (local / remote) when the search box is empty.
+ * The host already sorts by recent mtime; the client just truncates.
+ */
+const DEFAULT_VISIBLE_PER_GROUP = 10
+
+/** Bound on each filtered group while searching, so a huge repo cannot flood the DOM. */
+const MAX_SEARCH_REFS = 200
 
 /** Stable id for the footer "Git Graph" row (never collides with a ref name). */
 const GIT_GRAPH_ID = '__git-graph__'
+
+/**
+ * Take up to `limit` entries, always keeping the current branch when present.
+ * @param list - recent-sorted refs of one kind.
+ * @param limit - max rows to keep.
+ */
+function takeRecent(list: readonly RefAnswer[], limit: number): RefAnswer[] {
+  if (list.length <= limit) return [...list]
+  const current = list.find(entry => entry.current)
+  const top = list.slice(0, limit)
+  if (current === undefined || top.some(entry => entry.name === current.name)) return top
+  return [...top.slice(0, limit - 1), current]
+}
+
+/**
+ * Normalize a wire ref that may predate the `kind` field.
+ * @param entry - one ref from the host.
+ */
+function refKindOf(entry: RefAnswer): RefKind {
+  return entry.kind === 'remote' ? 'remote' : 'local'
+}
 
 /**
  * The selector. Renders null when the workspace has no branch.
@@ -211,13 +241,16 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   // early return: a hook that runs conditionally would break the render order.
   const label = (key: string, fallback: string): string => t?.(key) ?? fallback
 
-  const filtered = useMemo(() => {
+  const grouped = useMemo(() => {
     const list = refs ?? []
     const needle = query.trim().toLowerCase()
     const matched = needle === ''
       ? list
       : list.filter(entry => entry.name.toLowerCase().includes(needle))
-    return matched.slice(0, MAX_VISIBLE_REFS)
+    const limit = needle === '' ? DEFAULT_VISIBLE_PER_GROUP : MAX_SEARCH_REFS
+    const local = takeRecent(matched.filter(entry => refKindOf(entry) === 'local'), limit)
+    const remote = takeRecent(matched.filter(entry => refKindOf(entry) === 'remote'), limit)
+    return { local, remote, matchedCount: matched.length }
   }, [refs, query])
 
   // Mounting only once the fetch has settled makes that single measurement the
@@ -229,23 +262,23 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   const branch = answer.branch
   const selectedName = refs?.find(entry => entry.current)?.name
 
-  const switchTo = (name: string): void => {
+  const switchTo = (name: string, kind: RefKind): void => {
     if (cwd === undefined || cwd === '' || switching) return
-    if (name === selectedName || name === branch) {
+    if (kind === 'local' && (name === selectedName || name === branch)) {
       close()
       return
     }
     close()
     setSwitching(true)
     setSwitchError(null)
-    void checkoutBranch(cwd, name)
+    void checkoutBranch(cwd, name, kind)
       .then((result) => {
         store?.publish(cwd, { branch: result.branch, detached: false })
         // Keep the menu's idea of "current" in sync if it is reopened before
         // the next refs fetch.
         setRefs(prev => prev?.map(entry => ({
           ...entry,
-          current: entry.name === result.branch,
+          current: refKindOf(entry) === 'local' && entry.name === result.branch,
         })) ?? null)
       })
       .catch((err) => {
@@ -385,14 +418,75 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
     textAlign: 'left',
   }
 
+  const visibleCount = grouped.local.length + grouped.remote.length
   const emptyText = (refs ?? []).length === 0
-    ? label('noBranches', 'No local branches')
+    ? label('noBranches', 'No branches')
     : label('noMatches', 'No matching branches')
 
-  // Item count exposed for the mount regression test: section label + each
+  // Item count exposed for the mount regression test: section labels + each
   // visible branch row (the search field and footer are not counted as list
   // items — they are chrome around the scrollable refs).
-  const itemCount = filtered.length === 0 ? 1 : 1 + filtered.length
+  const sectionCount = (grouped.local.length > 0 || visibleCount === 0 ? 1 : 0)
+    + (grouped.remote.length > 0 ? 1 : 0)
+  const itemCount = visibleCount === 0 ? 1 : sectionCount + visibleCount
+
+  const renderBranchRow = (entry: RefAnswer): ReactNode => {
+    const kind = refKindOf(entry)
+    const selected = kind === 'local' && entry.name === selectedName
+    return (
+      <button
+        key={`${kind}:${entry.name}`}
+        type="button"
+        role="menuitem"
+        data-workspace-git-branch={entry.name}
+        data-workspace-git-kind={kind}
+        aria-current={selected ? 'true' : undefined}
+        style={{
+          ...rowStyle,
+          background: selected ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = selected
+            ? 'var(--dsw-alias-interactive-bg-hover)'
+            : 'transparent'
+        }}
+        onClick={() => { switchTo(entry.name, kind) }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            display: 'inline-flex',
+            flex: 'none',
+            width: '16px',
+            height: '16px',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--dsw-alias-label-tertiary)',
+          }}
+        >
+          <BranchIcon size={16} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {entry.name}
+        </span>
+        {selected ? (
+          <span aria-hidden="true" style={{ flex: 'none', color: 'var(--dsw-alias-label-primary)' }}>
+            ✓
+          </span>
+        ) : null}
+      </button>
+    )
+  }
+
+  const sectionLabelStyle: CSSProperties = {
+    padding: '4px 10px',
+    fontSize: '12px',
+    lineHeight: '16px',
+    color: 'var(--dsw-alias-label-tertiary)',
+  }
 
   const menu = open && menuReady && createPortal(
     <div
@@ -414,7 +508,23 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
         display: 'flex',
         flexDirection: 'column',
         borderRadius: '20px',
-        background: 'var(--dsw-specific-menu)',
+        // The menu surface must read as OPAQUE. `--dsw-specific-menu` is a
+        // translucent fill by design (`#f8f9faf0` light / `#303136f0` dark on
+        // darwin), and the shell only ever uses it *together with*
+        // `backdrop-filter: var(--dsw-menu-backdrop-filter)`, which blurs the
+        // content behind the card. We copied the background but not the blur,
+        // so the composer showed straight through the list. A solid
+        // `bg-layer-1` under the themed fill restores the intended look, and
+        // the blur is kept so the card still matches shell menus where
+        // supported.
+        background: 'var(--dsw-alias-bg-layer-1, #ffffff)',
+        // Layer the themed translucent fill over that solid base. Two
+        // background layers give an opaque result — the base colour shows
+        // through the top layer's alpha — while still tracking the active
+        // theme (the token flips per light/dark).
+        backgroundImage: 'linear-gradient(var(--dsw-specific-menu), var(--dsw-specific-menu))',
+        backdropFilter: 'var(--dsw-menu-backdrop-filter)',
+        WebkitBackdropFilter: 'var(--dsw-menu-backdrop-filter)',
         boxShadow: 'var(--dsw-elevation-prominent)',
       }}
       onClick={(e) => { e.stopPropagation() }}
@@ -482,76 +592,48 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
           overflowY: 'auto',
         }}
       >
-        <div
-          role="presentation"
-          style={{
-            padding: '4px 10px',
-            fontSize: '12px',
-            lineHeight: '16px',
-            color: 'var(--dsw-alias-label-tertiary)',
-          }}
-        >
-          {label('branch', 'Branch')}
-        </div>
-        {filtered.length === 0 ? (
-          <div
-            role="presentation"
-            style={{
-              padding: '8px 10px',
-              fontSize: '13px',
-              color: 'var(--dsw-alias-label-tertiary)',
-            }}
-          >
-            {emptyText}
-          </div>
-        ) : filtered.map(entry => {
-          const selected = entry.name === selectedName
-          return (
-            <button
-              key={entry.name}
-              type="button"
-              role="menuitem"
-              data-workspace-git-branch={entry.name}
-              aria-current={selected ? 'true' : undefined}
+        {visibleCount === 0 ? (
+          <>
+            <div role="presentation" style={sectionLabelStyle}>
+              {label('localBranches', 'Local branches')}
+            </div>
+            <div
+              role="presentation"
               style={{
-                ...rowStyle,
-                background: selected ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+                padding: '8px 10px',
+                fontSize: '13px',
+                color: 'var(--dsw-alias-label-tertiary)',
               }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = selected
-                  ? 'var(--dsw-alias-interactive-bg-hover)'
-                  : 'transparent'
-              }}
-              onClick={() => { switchTo(entry.name) }}
             >
-              <span
-                aria-hidden="true"
-                style={{
-                  display: 'inline-flex',
-                  flex: 'none',
-                  width: '16px',
-                  height: '16px',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--dsw-alias-label-tertiary)',
-                }}
-              >
-                <BranchIcon size={16} />
-              </span>
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {entry.name}
-              </span>
-              {selected ? (
-                <span aria-hidden="true" style={{ flex: 'none', color: 'var(--dsw-alias-label-primary)' }}>
-                  ✓
-                </span>
-              ) : null}
-            </button>
-          )
-        })}
+              {emptyText}
+            </div>
+          </>
+        ) : (
+          <>
+            {grouped.local.length > 0 ? (
+              <>
+                <div role="presentation" style={sectionLabelStyle}>
+                  {label('localBranches', 'Local branches')}
+                </div>
+                {grouped.local.map(renderBranchRow)}
+              </>
+            ) : null}
+            {grouped.remote.length > 0 ? (
+              <>
+                <div
+                  role="presentation"
+                  style={{
+                    ...sectionLabelStyle,
+                    marginTop: grouped.local.length > 0 ? '4px' : 0,
+                  }}
+                >
+                  {label('remoteBranches', 'Remote branches')}
+                </div>
+                {grouped.remote.map(renderBranchRow)}
+              </>
+            ) : null}
+          </>
+        )}
       </div>
       <div
         role="presentation"

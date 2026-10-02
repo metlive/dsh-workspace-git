@@ -30,19 +30,24 @@ export interface BranchesResult {
   branches: Record<string, BranchAnswer>
 }
 
+/** Whether a listed ref is a local branch or a remote-tracking branch. */
+export type RefKind = 'local' | 'remote'
+
 /** One branch row of the menu. */
 export interface RefAnswer {
-  /** The short branch name. */
+  /** The short branch name (`main`) or remote-tracking name (`origin/main`). */
   name: string
-  /** Whether HEAD currently points at it. */
+  /** Whether HEAD currently points at it (only ever true for local refs). */
   current: boolean
+  /** Local vs remote-tracking — drives menu grouping. */
+  kind: RefKind
 }
 
 /** The result of one branch-list lookup. */
 export interface RefsResult {
   /** Whether HEAD is detached (the list is still shown; no row is current). */
   detached: boolean
-  /** The sorted local branch names. */
+  /** Recent-sorted refs (locals first, then remotes). */
   refs: RefAnswer[]
 }
 
@@ -93,7 +98,7 @@ export async function fetchBranches(
 }
 
 /**
- * Resolve the local branch list of one repository.
+ * Resolve the local + remote branch list of one repository.
  *
  * Called only when the menu opens — the list is not needed to draw the closed
  * trigger, and a repository can hold hundreds of branches.
@@ -123,15 +128,20 @@ export interface CheckoutResult {
 }
 
 /**
- * Switch the work tree at `path` to the given local branch.
+ * Switch the work tree at `path` to the given branch.
+ *
+ * When `kind` is `remote`, the host creates or reuses a local tracking branch
+ * (`git switch --track`). Otherwise it runs a plain `git switch`.
  * @param path - the absolute workspace directory.
- * @param branch - short local branch name.
+ * @param branch - short local name, or `remote/branch` for tracking refs.
+ * @param kind - local vs remote-tracking (defaults to local).
  * @param signal - abort signal.
- * @returns the branch now checked out.
+ * @returns the local branch now checked out.
  */
 export async function checkoutBranch(
   path: string,
   branch: string,
+  kind: RefKind = 'local',
   signal?: AbortSignal,
 ): Promise<CheckoutResult> {
   let response: Response
@@ -139,7 +149,7 @@ export async function checkoutBranch(
     response = await fetch('/workspace-git/api/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path, branch }),
+      body: JSON.stringify({ path, branch, kind }),
       signal,
     })
   } catch (error) {

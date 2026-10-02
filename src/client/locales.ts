@@ -12,6 +12,8 @@ export const LOCALE_NS = 'workspaceGit'
 /** The zh dictionary. */
 export const zh: Record<string, string> = {
   branch: '分支',
+  localBranches: '本地分支',
+  remoteBranches: '远程分支',
   openMenu: '查看分支列表',
   switchBranch: '切换分支',
   switching: '切换中…',
@@ -23,7 +25,7 @@ export const zh: Record<string, string> = {
   cancel: '取消',
   detached: '游离 HEAD',
   loading: '加载中…',
-  noBranches: '没有本地分支',
+  noBranches: '没有分支',
   noMatches: '没有匹配的分支',
   searchBranches: '搜索分支',
   gitGraph: 'Git 图谱',
@@ -51,6 +53,8 @@ export const zh: Record<string, string> = {
 /** The en dictionary. */
 export const en: Record<string, string> = {
   branch: 'Branch',
+  localBranches: 'Local branches',
+  remoteBranches: 'Remote branches',
   openMenu: 'Show branches',
   switchBranch: 'Switch branch',
   switching: 'Switching…',
@@ -62,7 +66,7 @@ export const en: Record<string, string> = {
   cancel: 'Cancel',
   detached: 'Detached HEAD',
   loading: 'Loading…',
-  noBranches: 'No local branches',
+  noBranches: 'No branches',
   noMatches: 'No matching branches',
   searchBranches: 'Search branches',
   gitGraph: 'Git Graph',
