@@ -6,8 +6,8 @@
  *
  * Layout mirrors the shell's branch picker card:
  *   1. search field at the top ("搜索分支")
- *   2. "本地分支" / "远程分支" headings + filtered refs (default: 10 most
- *      recent per group; search raises the cap)
+ *   2. "本地分支" / "远程分支" headings + filtered refs (default: at most 10
+ *      rows per group; search raises the cap)
  *   3. create-branch + "Git 图谱" footer
  *
  * Both the pill and every row of its list lead with the branch glyph

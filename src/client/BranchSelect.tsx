@@ -6,8 +6,8 @@
  *
  * Layout mirrors the shell's branch picker card:
  *   1. search field at the top ("搜索分支")
- *   2. "本地分支" / "远程分支" headings + filtered refs (default: 10 most
- *      recent per group; search raises the cap)
+ *   2. "本地分支" / "远程分支" headings + filtered refs (default: at most 10
+ *      rows per group; search raises the cap)
  *   3. create-branch + "Git 图谱" footer
  *
  * Both the pill and every row of its list lead with the branch glyph
@@ -59,7 +59,11 @@ const ERROR_FEEDBACK_MS = 2_400
 
 /**
  * Default visible rows per group (local / remote) when the search box is empty.
- * The host already sorts by recent mtime; the client just truncates.
+ *
+ * The host returns refs sorted by loose-ref mtime descending, but refs packed
+ * into `packed-refs` carry no mtime and therefore fall back to name order — so
+ * in a long-lived repository this window is "first 10 by name", not "10 most
+ * recently used". The client only truncates; it cannot improve the ordering.
  */
 const DEFAULT_VISIBLE_PER_GROUP = 10
 

@@ -6,7 +6,9 @@ DSH Web 插件：**显示工作区项目的 Git 分支**。有仓库就显示，
 - 会话视图环「轨迹」右侧注册 **Git 图谱** 标签（`conversation.view` / `workspace-git-graph` / order 20）；有 HEAD（含游离）时展示详细提交列表，非仓库时显示**空态说明文案**（标签环显隐由 shell 决定，见「Git 图谱」一节）。
 - 胶囊与列表的**每一行都以分支图标开头**（官方 `IconBranchOutline16` 同款形状，内联在
   `src/client/BranchIcon.tsx`，`currentColor` 跟随所在行着色）；胶囊原先是一个强调色圆点。
-- 列表按「本地分支 / 远程分支」分组；默认每组展示**最近 10 个**（按松散 ref 的 mtime）；搜索时放宽上限。
+- 列表按「本地分支 / 远程分支」分组，**默认每组最多 10 个**；搜索时放宽到 200。排序见「已知限制 5」：
+  松散 ref 按 mtime 降序优先，**打包在 `packed-refs` 里的条目没有 mtime，会退化为按名称排序**，因此
+  老仓库里默认展示的是「名称靠前的前 10 个」而非「最近用过的 10 个」。当前分支始终保留在列表中。
 - 列表里当前分支带勾选标记；**点击本地分支会执行 `git switch` 切换**；**点击远程分支会 `git switch --track`**（已有同名本地分支则直接切过去）。工作区有未提交改动时可能失败，失败信息显示在胶囊 tip 上。
 - 列表底部（「Git 图谱」上方）有 **创建并检查新分支…**：弹出输入框，`git switch -c` 创建并切换过去（分支已存在或名称非法时在弹框内展示 git 报错）。
 - 菜单用 `portal` 渲染到 `document.body` 并向**上**展开，因此不会被输入框的 `overflow` 裁掉、也不会跑出视口下边缘。
@@ -77,7 +79,8 @@ submodule）读取其中的 `gitdir:` 指针。最近的那个仓库生效，因
 // 请求
 { "path": "/abs/ws1" }
 
-// 响应（按 kind 分组由客户端完成；数组内本地在前、远程在后，同组按松散 ref mtime 降序）
+// 响应（按 kind 分组由客户端完成；数组内本地在前、远程在后，同组内松散 ref 按 mtime 降序，
+// packed-refs 条目无 mtime、排在带 mtime 的条目之后并按名称排序；每组最多渲染 10 行）
 { "ok": true, "value": {
   "detached": false,
   "refs": [
@@ -228,8 +231,14 @@ pnpm build       # → lib/index.js + lib/client.js + lib/types
 
 1. **输入框下拉用官方插槽，跨版本稳定**；侧边栏工作区行（阶段 4）需要 DOM 锚点
    （DSH 若更换侧边栏实现或 CSS Modules 命名策略会失效——届时下拉仍工作，插件整体不崩）。
-2. **可切换 / 创建本地分支**：点击菜单行执行 `git switch`；「创建并检查新分支…」执行 `git switch -c`。不提供 pull / push。
+2. **可切换 / 创建分支**：点击本地分支行执行 `git switch`；点击远程分支行执行 `git switch --track`
+   （已有同名本地分支则直接 `git switch`）；「创建并检查新分支…」执行 `git switch -c`。不提供 pull / push。
 3. **分支更新延迟 ≤3s**：TTL 缓存，不监听 `.git/HEAD` 文件变化（`fs.watch` 在 macOS 与网络盘上不可靠）。
    下拉每次展开都会重新拉取；UI 内切换会立刻更新胶囊文案。
-4. **不做 ahead/behind、不列远端分支**：只读本地 `refs/heads/**` 与 `packed-refs`。
-5. 单次 branches 请求最多 64 个路径，向上查找最多 12 层，嵌套分支名最深 8 层，菜单最多渲染 200 个分支。
+4. **不做 ahead/behind；远端分支由本地 `refs/remotes/**` 得出，不做 `git fetch`**：只读
+   `refs/heads/**`、`refs/remotes/**` 与 `packed-refs`，因此列表反映的是**上次 fetch 的本地快照**，
+   不会主动联网更新远端分支（`origin/HEAD` 会被过滤掉，不作为分支列出）。
+5. **「最近」排序的边界**：仅松散 ref 文件有 mtime。被 `git pack-refs` 打包进 `packed-refs` 的分支
+   没有 mtime，与同组条目比较时视作 0，因此默认的「每组 10 个」在**长期存在的仓库里退化为按名称排序**，
+   而不是按最近使用时间。需要精确定位近期分支时请用搜索框。
+6. 单次 branches 请求最多 64 个路径，向上查找最多 12 层，嵌套分支名最深 8 层，菜单最多渲染 200 个分支。

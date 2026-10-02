@@ -120,11 +120,14 @@ export declare function parsePackedRefs(text: string): GitRefCandidate[];
  *
  * Loose refs win on duplicates (they are the newer spelling). Within each
  * kind, entries sort by loose mtime descending (most recently touched first),
- * then by name — so the menu's default "recent" window is stable and useful.
+ * then by name. Packed entries carry no mtime and are treated as 0, so they
+ * trail every stamped sibling and end up in name order — meaning the menu's
+ * default window is "most recent" only for loose refs, and degrades to
+ * "first by name" once `git pack-refs` has compacted the repository.
  * Locals are listed before remotes in the flat array; the UI groups them.
  *
  * The current local branch is flagged rather than force-reordered: the client
- * keeps it visible when truncating to the recent window.
+ * keeps it visible when truncating to the default window.
  * @param loose - candidates from loose ref files (may carry mtime).
  * @param packed - candidates from `packed-refs`.
  * @param current - the checked-out local branch name, when HEAD is not detached.
