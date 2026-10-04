@@ -2,7 +2,7 @@ import { type BranchCache } from './git-branch.ts';
 import { type GitCommitDetail } from './git-commit-detail.ts';
 import { type GitGraphSnapshot } from './git-graph.ts';
 import type { GitRefKind } from './git-ref.ts';
-import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts';
+import type { Context, PluginHttpRequest, PluginHttpResponse } from './context-types.ts';
 /** Route path prefix; the API method is the final segment. */
 export declare const API_PREFIX = "/workspace-git/api";
 /** One branch answer as the wire carries it. */
@@ -121,4 +121,4 @@ export declare function resolveCommit(payload: unknown): Promise<GitCommitDetail
  * @param fence - browser-trust predicate.
  * @returns the route handler.
  */
-export declare function createApiHandler(cache: BranchCache, fence: (req: PluginHttpRequest) => boolean): (req: PluginHttpRequest, res: PluginHttpResponse) => Promise<void>;
+export declare function createApiHandler(cache: BranchCache, fence: (req: PluginHttpRequest) => boolean, ctx: Context): (req: PluginHttpRequest, res: PluginHttpResponse) => Promise<void>;

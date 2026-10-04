@@ -104,6 +104,12 @@ export interface PluginSlotRegisterOptions {
     label?: string | (() => string);
     locale?: string;
     registrant?: string;
+    /**
+     * Cell shadowing rank (ascending, default 0, lowest renders). In a `single`
+     * slot a same-priority second registration THROWS, which is why the hero
+     * preset chip registers at -1 to coexist with the official occupant.
+     */
+    priority?: number;
     inject?: (...args: any[]) => Record<string, unknown>;
     children?: Record<string, unknown>;
 }

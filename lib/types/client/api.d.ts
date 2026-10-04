@@ -85,3 +85,25 @@ export declare function checkoutBranch(path: string, branch: string, kind?: RefK
  * @returns the branch now checked out.
  */
 export declare function createBranch(path: string, branch: string, signal?: AbortSignal): Promise<CheckoutResult>;
+/** The `enhance-prompt` result: the rewrite plus the route that produced it. */
+export interface PromptEnhanceResult {
+    /** The rewritten prompt, ready to replace the draft. */
+    draft: string;
+    /** Provider that answered (diagnostics only). */
+    provider: string;
+    /** Model that answered (diagnostics only). */
+    model: string;
+}
+/**
+ * Rewrite one composer draft through the session's own model.
+ *
+ * Unlike the git lookups, a failure here is NOT silent: the caller shows the
+ * reason, because the user explicitly asked for this and needs to know why
+ * nothing happened.
+ * @param sessionId - the session whose model performs the rewrite.
+ * @param draft - the current composer text.
+ * @param signal - abort signal; an in-flight enhancement is cancelled with it.
+ * @returns the rewrite.
+ * @throws WorkspaceGitApiError carrying a machine code the caller can explain.
+ */
+export declare function enhancePrompt(sessionId: string, draft: string, signal?: AbortSignal): Promise<PromptEnhanceResult>;

@@ -5,7 +5,21 @@
  */
 import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts';
 /** Machine-readable error codes of this plugin's API. */
-export type WorkspaceGitErrorCode = 'bad-request' | 'method-error' | 'forbidden' | 'too-large' | 'internal';
+export type WorkspaceGitErrorCode = 'bad-request' | 'method-error' | 'forbidden' | 'too-large' | 'internal' | 'empty-draft' | 'draft-too-large' | 'session-not-found' | 'no-model' | 'no-llm' | 'timeout' | 'truncated' | 'empty-result' | 'model-error';
+/** The provider/model pair one auxiliary call runs on. */
+export interface ResolvedRoute {
+    provider: string;
+    model: string;
+}
+/** The `enhance-prompt` method's result: the rewrite and what produced it. */
+export interface PromptEnhanceAnswer {
+    /** The rewritten prompt, ready to replace the draft. */
+    draft: string;
+    /** Provider that answered (echoed for logs and diagnostics). */
+    provider: string;
+    /** Model that answered (echoed for logs and diagnostics). */
+    model: string;
+}
 /** One API failure with its wire code and HTTP status. */
 export declare class WorkspaceGitError extends Error {
     readonly code: WorkspaceGitErrorCode;

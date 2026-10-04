@@ -4,3 +4,5 @@ lib/*.map
 .DS_Store
 .idea/
 .superpowers/
+.workbuddy/
+docs/

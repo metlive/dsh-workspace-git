@@ -12,6 +12,11 @@ DSH Web 插件：**显示工作区项目的 Git 分支**。有仓库就显示，
 - 列表里当前分支带勾选标记；**点击本地分支会执行 `git switch` 切换**；**点击远程分支会 `git switch --track`**（已有同名本地分支则直接切过去）。工作区有未提交改动时可能失败，失败信息显示在胶囊 tip 上。
 - 列表底部（「Git 图谱」上方）有 **创建并检查新分支…**：弹出输入框，`git switch -c` 创建并切换过去（分支已存在或名称非法时在弹框内展示 git 报错）。
 - 菜单用 `portal` 渲染到 `document.body` 并向**上**展开，因此不会被输入框的 `overflow` 裁掉、也不会跑出视口下边缘。
+- **卡片高度上限 500px**（`max-height: min(500px, calc(100vh - 24px))`，见 `MENU_MAX_HEIGHT`）：这是**上限不是固定高度**，
+  分支少时卡片仍然只有内容那么高。搜索会把每组上限放宽到 200 条，没有这层上限时高窗口下列表会一路顶到视口顶部、把对话盖住。
+  补充细节：卡片本身是**内容高度**的 flex 列，所以这层上限同时写在中间那层滚动宿主上——只写在卡片上时，
+  宿主会量到自己的完整内容高度、撑破卡片的上限，结果是底部两行（创建分支 / Git 图谱）被裁掉而不是列表滚动。
+  搜索框、分隔线、底部两行都是 `flex:none`；宿主是 `flex:1 1 auto; min-height:0`，超过上限的部分在列表内部滚动。
 - 侧边栏工作区/项目行显示各自的分支 chip（阶段 4，见「路线图」）。
 - **不是 Git 仓库 → 分支胶囊完全不渲染**；解析失败、路由不可用、目录已删除 → 同样不渲染。本插件没有错误占位符。
   （**例外**：会话视图里的 Git 图谱标签页对非仓库渲染空态文案，原因见「Git 图谱」一节——这与上面并不矛盾：胶囊是「有就显示」的装饰，
@@ -32,6 +37,11 @@ CLI 会读取包内 `dsh.bundle.patch`（`cordis.patch.yml`），自动把 `dsh-
 # 若用 pm2
 pm2 restart dsh-web
 ```
+
+> **改了宿主半（`src/*.ts` → `lib/index.js`）就必须重启。** 客户端半有 HMR
+> （`dsh-client-hmr` 每 500ms 轮询 bundle 并推送），**宿主半没有任何热重载**。
+> 只重新构建时：浏览器里是新客户端，服务器上还是旧路由 —— 表现为功能「看起来装了、
+> 点下去报 400」。`npm run verify:live` 只校验客户端字节，**发现不了这种情况**。
 
 卸载：
 
@@ -175,6 +185,228 @@ const viewTabs = () => { for (const entry of slots.entries("conversation.view"))
 
 分支**胶囊**（composer 座位）不受这套约束：它没有这样的空容器，非仓库仍然完全不渲染。
 
+### Agent 预设选择器（绕过官方 Developer tools 门控）
+
+**Agent 预设**芯片注册进 `conversation.hero.agentPreset` —— 新会话界面里
+`conversation.hero.workspace`（「选择工作区」）**右侧**的座位；只读标签注册进
+`conversation.session.header.actions`（`id: workspace-git-agent-preset`，`order: -10`）。
+
+**为什么本插件要自己画一个，而不是复用官方芯片。** 官方
+`@deepseek-ai/dsh-client-ui-agent-preset` 确实注册进同一个座位，但它在
+`ap-client.js:480` 硬性门控：
+
+```js
+if (!main || !developerTools || !ready) return null;
+```
+
+### 加载顺序：必须用 `ctx.inject`，不能内联 `ctx.get`
+
+客户端插件之间的**激活顺序没有约束**，所以 `apply()` 执行时 `remote` 可能还没就绪。
+内联读取会拿到 `undefined`，而「拿不到就什么都不注册」的守卫会**静默吞掉**这个情况 ——
+表现为**没有芯片、没有标签、也没有任何报错**：
+
+```js
+// 错误：remote 未就绪时静默不注册
+const remote = ctx.get('remote')
+const store = remote?.agentPresets === undefined ? undefined : new AgentPresetStore(remote)
+
+// 正确：把依赖交给 cordis，等它就绪后再注册（并在此后服务重启时自动重跑）
+ctx.inject(['remote', 'remote.agentPresets'], (scope) => { /* 注册两个座位 */ })
+```
+
+注意 `remote` **不放进** `export const inject`：那会让缺少 agent-preset registry 的部署
+整个激活失败，连带分支胶囊与 Git Graph 一起挂掉。放在 `ctx.inject` 上则精确得多 ——
+没有该 registry 的部署只是**没有这两个控件**，其余功能照常。
+
+`developerTools` 取自设置 → 通用 → Developer tools。关键点在于
+**该座位被 `ui-conversation` 声明为 `kind: "single"`**（`client.js:18179`）；
+而 `ui-slots` 的注册表对 `single` 座位是**按 priority 逐格判定**的
+（`SlotCore.register`，`slot "... already has a registration at priority 0 ..."`）：
+
+- **同一 priority 再注册一次会直接抛错**，而该异常会中断本插件整个 `apply()`，
+  连带把分支胶囊与 Git 图谱一起拖下水；
+- **不同 priority 则允许共存**，`priority` 是文档化的「格位遮蔽排名」（**数值最低者渲染**）。
+
+因此顺序很关键，**不可省略 `priority: -1`**：
+
+```js
+ctx.slots.register({ name: 'conversation.hero.agentPreset', priority: -1, ... }, AgentPresetChip)
+```
+
+官方芯片用的是默认 priority `0`，所以 `-1` 既能避开抛错，又能拿下这个格位。
+拿下之后**不等于一直显示**——两个渲染组件都会跟随该设置实时让位：
+
+| Developer tools | hero 座位显示 | 会话头部标签 |
+|---|---|---|
+| **开** | 官方芯片（本插件渲染 `null` 让位） | 官方标签（本插件渲染 `null`） |
+| **关** | **本插件芯片**（官方被门控为 `null`） | **本插件标签** |
+
+即：给主动打开 Developer tools 的用户保留原生控件，同时精确覆盖本插件存在的理由——门控关闭时那个位置不再空着。
+官方头部标签**并不**受该设置门控（只有 hero 芯片受），所以开着时它已经在显示，本插件同样让位以免重复。
+
+**本插件的做法**：门控是**纯客户端的显示规则，不是宿主限制** —— `agentPresets.list`
+与 `agentPresets.select` 两个 remote 方法照常应答。因此我们直接读同一份宿主数据
+（`ctx.remote.agentPresets`）并自绘控件，无需改宿主、无需打补丁：
+
+| 文件 | 作用 |
+|---|---|
+| `src/client/agent-preset/api.ts` | 宿主 remote 契约的类型化封装；优先取 `error.details.reason` |
+| `src/client/agent-preset/store.ts` | 名单与选择状态；`gateway/invocation-unavailable` 视为「本部署无预设」而非错误 |
+| `src/client/agent-preset/AgentPresetChip.tsx` | hero 座位上的芯片（含让位逻辑） |
+| `src/client/agent-preset/AgentPresetLabel.tsx` | 会话头部的只读标签 |
+| `src/client/agent-preset/labels.ts` | 内置预设（`standard`/`ptc`/`minimal`/`cordis`）的本地化文案 |
+| `src/client/agent-preset/AgentPresetIcon.tsx` | `currentColor` 图标 |
+
+**两点与官方的有意差异**：去掉逐字进场动画；芯片**切换当前会话**的预设，
+而不是像官方那样「暂存给下一个会话」—— 暂存机制存在的原因是官方芯片还要负责
+尚无会话的新建页，而本芯片作用于它实际挂着的那个会话。
+
+**降级契约**（与分支胶囊一致）：名单为空、部署未挂载预设注册表、或没有可用预设时，
+**什么都不渲染**，既不报错也不留空控件。
+
+**`remote` 不是硬依赖。** 它没有写进 `inject` 数组：缺少预设注册表的部署只是少两个控件，
+不该让整个插件激活失败（那会连带把分支胶囊和 Git 图谱一起拖下水）。因此用
+`ctx.get('remote')` 探测，缺失时直接跳过这两处注册。
+
+仓库内自带两个测试，覆盖两层不同的风险：
+
+**1. `npm test` —— 把构建产物当浏览器模块加载。** 它用**真实的 `SlotCore`**
+先声明这些座位、并让官方插件以默认 priority 先占住 `single` 座位，再加载本插件的构建产物。
+因此它覆盖的是真实冲突路径，而不只是「函数被调用了」——去掉 `priority: -1` 该测试就会失败。
+
+**2. `npm run verify:live` —— 验证运行中的 GUI 真的在提供这份构建。**
+磁盘上的文件正确，**不等于**浏览器收到的字节正确：客户端半边走的是带 revision 的
+`/plugins/??…&rev=…` 路由。该脚本用 profile 自己存储的 browser-session 凭据
+（`~/.dsh/.credentials.yaml`，按 `client-connection` 的 `v1.<payload>.<hmac>` 编码签出 cookie）
+认证后读取页面里的 `window.__DSH_BOOT__`，取出本插件那一行的 URL 并抓取，
+断言其中确实包含两个座位注册、`priority: -1` 与 `agentPresets` 读取。
+
+```bash
+npm test            # 座位注册与渲染契约（真实 SlotCore）
+npm run verify:live # 运行中的 GUI 提供的字节（默认 http://127.0.0.1:19387）
+```
+
+> 注意：combo 路由里的 `??` 必须**按字面**发出去。`fetch`/`URL` 会把它规范化成 `%3F%3F`
+> 从而 404，所以脚本用 `node:http` 逐字节写请求行。
+
+### 提示词增强器（模型选择器左边的增强图标）
+
+输入框右侧、**紧邻模型选择器左边**有一个增强图标：点它就用**该会话当前选中的模型**把
+（可能极简/模糊的）草稿重写成结构清晰的提示词，并**直接覆盖**回输入框。
+执行期间该图标**换成转圈 spinner**。座位是 `conversation.input.right`
+（与分支胶囊的 `input.left` **不同簇**，见下）。
+
+| 文件 | 作用 |
+|---|---|
+| `src/prompt-enhance.ts` | 宿主半：解析当前会话模型、调 `ctx.llm.stream`、规整输出 |
+| `src/client/prompt-enhance/PromptEnhancer.tsx` | 客户端半：图标按钮、`setDraft` 回写、失败提示 |
+| `src/client/prompt-enhance/EnhanceIcon.tsx` | 增强图标（WorkBuddy 原版路径）与 spinner |
+
+#### 图标与 spinner 的来源
+
+两者都直接取自 WorkBuddy 自身的「增强提示词」按钮
+（`app.asar.unpacked/resources/extensions/im-channels/ui/assets/plan-input-*.js`），
+**逐路径照搬**，不做改绘：同一个 Composer 行里出现两个长得不一样的「增强」控件，
+会被当成两个不同功能。
+
+| | 图形 | 网格 |
+|---|---|---|
+| `EnhanceIcon` | 四角星 + 斜杠（WorkBuddy 组件 `fV`） | `viewBox="0 0 16 16"`，`fillOpacity 0.7` |
+| `EnhanceSpinner` | `r=6` 圆弧 `strokeDasharray="28 10"`（组件 `hV`） | `viewBox="0 0 16 16"` |
+
+两个约定不要改：
+
+1. **都用 `currentColor`**，按钮靠自己的 `color` 给所有状态（常态/悬停/执行中/禁用）上色，
+   不需要按状态切图。
+2. **spinner 的旋转是内联 `animation` + 组件内一个 `<style>`**（`@keyframes dsw-enhance-spin`），
+   因为本插件**不带任何 CSS**，为一个动画引入样式表不划算。keyframes 用 `dsw-` 前缀避免全局冲突，
+   并带 `prefers-reduced-motion: reduce` 分支把圆弧停住 —— 无限旋转正是这个设置要抑制的东西。
+
+#### 状态可从外部观察
+
+按钮带 `data-enhance-state="idle|busy"`，spinner 容器带 `data-icon="prompt-enhance-spinner"`。
+挂载测试靠这两个属性断言 idle/busy 的 markup 确实不同（`busy` 是内部 state，
+无 DOM 环境点不到，因此 busy 分支从 bundle 源码断言）。
+
+> busy 期间按钮 `opacity` 保持 `1`，只有空草稿才降到 `0.4`：转圈是此刻唯一的状态提示，
+> 再压暗就看不见了。不可点的语义由 `disabled` + `cursor: default` 承担。
+
+#### 为什么是 `conversation.input.right`（不是 `input.left`，也不是 `input.model`）
+
+`ui-conversation` 把工具行拆成**两个容器**：
+
+```
+[ leading  ]  ＋ · permission · plan · input.left
+[ trailing ]  input.right · input.model · submit
+```
+
+关键点：`input.left` 与 `input.model` **分属不同容器**。所以把 `order` 调大
+（曾是 `order: 30`）只能让控件成为 **leading 簇内最右**，**并不等于「模型选择器左边」**——
+中间还隔着整个 leading 簇的尾部。`order` 表达不了这个位置，**只有座位能表达**。
+
+因此改用 `conversation.input.right`。运行时自省契约（`dsh-cordis-client-runner` 里的
+slot contract，rev `d5562dc82e23`）原文：
+
+| 字段 | 值 |
+|---|---|
+| `summary` | `Compact controls before the composer submit action.` |
+| `kind` / `scope` | `list` / `session` |
+| `occupants` | `[]`（**无人占用**） |
+| `replaceRisk` | `none` |
+
+即：位置正是「模型选择器紧左侧」，且因为是 `list` 槽、当前空着，
+**不需要 `priority: -1` 去抢别人不拥有的控件**（对比 `conversation.input.model`
+是 `single` 槽、被官方模型选择器以 priority 0 占据）。
+
+注册时**不设 `order`**：该座位当前只有本插件一个占用者，位置由座位本身决定；
+一旦有第二个占用者，排名先后是**别人的**决定，不该由本插件替他们猜。
+
+> ⚠️ 上述结论来自**抓取运行中的 DSH 实例**（`127.0.0.1:19387`）核对真实 bundle，
+> 不是读文档推断。若日后 DSH 改版调整了布局，**不要沿用本节的推理**，请重新核对：
+>
+> 0. **不需要自己启服务**。`/Applications/DeepSeek Harness.app` 桌面客户端自带 web
+>    服务，客户端运行时它就在监听 19387。**不要**用 `npx @deepseek-ai/dsh web` 去做这件事
+>    （在 npm 缓存异常时会安装失败，而误杀客户端进程的风险是真的）。
+>    动手前先 `lsof -nP -iTCP:19387 -sTCP:LISTEN` 确认 `COMMAND` 列是 `DeepSeek`。
+> 1. 从 `~/.dsh/.credentials.yaml` 的 `client-connection/browser-session` 读 `secret`，
+>    按 `v1.<base64url(payload)>.<base64url(hmac-sha256)>` 签出 cookie
+>    （`payload` 含 `version/authority/issuedAt/expiresAt`；`authority` 为 `host:port`，
+>    cookie 名 = `dsh-auth-` + base64url(sha256(authority))）。
+> 2. 取首页，**手工括号配对**截出 `window.__DSH_BOOT__` 里的 JSON（嵌套很深，
+>    直接 `JSON.parse` 整段会失败），得到 `entries`。
+> 3. 抓 `@deepseek-ai/dsh-client-ui-conversation/client.js` 看 `renderSlot` 的**实际容器顺序**；
+>    抓 `@deepseek-ai/dsh-cordis-client-runner/client.js` 看**插槽契约自省**
+>    （每个座位的 `summary` / `kind` / `occupants` / `replaceRisk`）—— 比任何文档都权威。
+>
+> 注意：combo 路由里的 `??` 必须**按字面**发送，`fetch`/`URL` 会规范化成 `%3F%3F` 导致 404，
+> 所以要用 `node:http` 逐字节写请求行。
+
+#### 草稿的读写走 `uiSession`，不碰 DOM
+
+`ui-conversation` 通过 `uiSession.provide({ hooks: ["input"], props: ["inputActions"] })`
+把 `useInput`（草稿选择器）与 `inputActions`（`setDraft`）发布到 session 作用域，
+槽位运行时按会话物化后作为**组件的普通 props** 传入 —— 与 `InputBar` 自己收到的两个
+prop 完全一致。所以**不要**在注册时再声明同名 `inject`：`uiSession.provide` 对重复 prop
+会抛 `duplicate ... at prop`（与 `single` 槽同类陷阱），测试里有一条断言锁住这点。
+
+#### 三条不可退让的性质
+
+1. **失败绝不改动用户文本。** 只有成功才写回；所有失败路径都保持草稿原样并说明原因。
+   `test/prompt-enhance-host.mjs` 用 28 条断言逐条覆盖（空草稿、超大、会话关闭、
+   无模型、无 llm 服务、模型报错、超时、截断、空输出、纯空白输出，以及
+   **「流未收到 finish 就结束」**——这一条曾是真缺陷：`finishKind` 初始值是成功值
+   `'stop'`，导致半截输出被当成完整改写写回输入框）。
+2. **模型的回答是数据，不是指令。** 草稿以 JSON 嵌套进 user message，system prompt
+   明确要求「重写而非回答」；返回值若被整段 ``` 包裹会先剥掉。
+3. **取消不是失败。** 卸载（切会话）会 abort 在途请求，避免把结果写进下一个会话的
+   输入框；abort 不弹提示。
+
+#### 宿主半需要重启才生效
+
+客户端半有 HMR（每 500ms 轮询 bundle），**宿主半没有**。新增路由后必须重启 `dsh web`，
+否则路由返回 `unknown workspace-git API method "enhance-prompt"` —— 客户端看起来
+一切正常，点下去却总是这个 400。
+
 ### 图谱的滚动契约（与「轨迹」同构）
 
 **提交列表、点击详情是两个独立滚动条**，这点靠**单轴 flex** 保证，不要改回 grid：
@@ -241,4 +473,5 @@ pnpm build       # → lib/index.js + lib/client.js + lib/types
 5. **「最近」排序的边界**：仅松散 ref 文件有 mtime。被 `git pack-refs` 打包进 `packed-refs` 的分支
    没有 mtime，与同组条目比较时视作 0，因此默认的「每组 10 个」在**长期存在的仓库里退化为按名称排序**，
    而不是按最近使用时间。需要精确定位近期分支时请用搜索框。
-6. 单次 branches 请求最多 64 个路径，向上查找最多 12 层，嵌套分支名最深 8 层，菜单最多渲染 200 个分支。
+6. 单次 branches 请求最多 64 个路径，向上查找最多 12 层，嵌套分支名最深 8 层，菜单最多渲染 200 个分支；
+   卡片可视高度上限 500px，超出部分在列表内部滚动。

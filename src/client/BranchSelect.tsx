@@ -70,6 +70,33 @@ const DEFAULT_VISIBLE_PER_GROUP = 10
 /** Bound on each filtered group while searching, so a huge repo cannot flood the DOM. */
 const MAX_SEARCH_REFS = 200
 
+/**
+ * Upper bound on the branch card's height, in pixels.
+ *
+ * The card is a portal anchored above the composer, so without a cap a tall
+ * window plus the search filter (which raises the per-group limit to
+ * {@link MAX_SEARCH_REFS}) lets the list grow until it covers most of the
+ * viewport. 500px keeps long ref lists scrollable without hiding the
+ * conversation.
+ *
+ * This is a MAXIMUM, not a fixed height: the card stays content-sized, so a
+ * repository with a handful of refs keeps the short card it always had. Only
+ * the overflowing case changes — past the cap the list scrolls internally
+ * while the search field and the footer rows stay pinned.
+ */
+const MENU_MAX_HEIGHT_PX = 500
+
+/**
+ * The cap as a CSS max-height, bounded by the viewport.
+ *
+ * Applied to the card AND to the scroll host inside it. The card is a
+ * content-sized flex column, so a `flex: 1 1 auto` scroll host resolves
+ * against the card's content height rather than the cap; passing the same cap
+ * to the host means it measures itself against the cap too, in every browser
+ * (no reliance on `max-height` being treated as a definite size during layout).
+ */
+const MENU_MAX_HEIGHT = `min(${MENU_MAX_HEIGHT_PX}px, calc(100vh - 24px))`
+
 /** Stable id for the footer "Git Graph" row (never collides with a ref name). */
 const GIT_GRAPH_ID = '__git-graph__'
 
@@ -507,7 +534,10 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
         boxSizing: 'border-box',
         minWidth: '240px',
         maxWidth: '360px',
-        maxHeight: 'calc(100vh - 24px)',
+        // Cap only — the card stays content-sized, so a short ref list renders
+        // a short card. See MENU_MAX_HEIGHT: the cap is repeated on the scroll
+        // host below so the list scrolls instead of pushing the footer out.
+        maxHeight: MENU_MAX_HEIGHT,
         padding: '4px',
         display: 'flex',
         flexDirection: 'column',
@@ -535,6 +565,7 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
     >
       <div
         style={{
+          flex: 'none',
           display: 'flex',
           alignItems: 'center',
           gap: '8px',
@@ -582,6 +613,7 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
       <div
         role="presentation"
         style={{
+          flex: 'none',
           height: '0.5px',
           margin: '0 2px 4px',
           background: 'var(--dsw-alias-border-l1)',
@@ -592,6 +624,15 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
         style={{
           display: 'flex',
           flexDirection: 'column',
+          // Absorb the leftover space and scroll past it. `1 1 auto` (not the
+          // default `0 1 auto` basis) lets the host grow to the space the card
+          // actually gives it.
+          flex: '1 1 auto',
+          // The card is content-sized, so the host carries the cap itself:
+          // without this it would measure to its full content height, overflow
+          // the card's max-height, and the footer rows would be clipped away
+          // instead of the list scrolling.
+          maxHeight: MENU_MAX_HEIGHT,
           minHeight: 0,
           overflowY: 'auto',
         }}

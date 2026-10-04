@@ -6,7 +6,39 @@
 import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts'
 
 /** Machine-readable error codes of this plugin's API. */
-export type WorkspaceGitErrorCode = 'bad-request' | 'method-error' | 'forbidden' | 'too-large' | 'internal'
+export type WorkspaceGitErrorCode =
+  | 'bad-request'
+  | 'method-error'
+  | 'forbidden'
+  | 'too-large'
+  | 'internal'
+  // Prompt enhancement refusals. Each is a distinct, user-explicable outcome:
+  // the client shows the reason and leaves the composer untouched.
+  | 'empty-draft'
+  | 'draft-too-large'
+  | 'session-not-found'
+  | 'no-model'
+  | 'no-llm'
+  | 'timeout'
+  | 'truncated'
+  | 'empty-result'
+  | 'model-error'
+
+/** The provider/model pair one auxiliary call runs on. */
+export interface ResolvedRoute {
+  provider: string
+  model: string
+}
+
+/** The `enhance-prompt` method's result: the rewrite and what produced it. */
+export interface PromptEnhanceAnswer {
+  /** The rewritten prompt, ready to replace the draft. */
+  draft: string
+  /** Provider that answered (echoed for logs and diagnostics). */
+  provider: string
+  /** Model that answered (echoed for logs and diagnostics). */
+  model: string
+}
 
 /** One API failure with its wire code and HTTP status. */
 export class WorkspaceGitError extends Error {
@@ -41,6 +73,14 @@ function statusOf(error: WorkspaceGitError): number {
     case 'too-large': return 413
     case 'method-error': return 405
     case 'internal': return 500
+    case 'draft-too-large': return 413
+    case 'session-not-found': return 404
+    case 'no-llm': return 503
+    case 'timeout': return 504
+    // Model-side refusals: the request was fine, the call was not.
+    case 'truncated':
+    case 'empty-result':
+    case 'model-error': return 502
     default: return 400
   }
 }

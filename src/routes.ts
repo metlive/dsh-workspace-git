@@ -7,6 +7,7 @@
  * - `commit` — one commit's message + changed files (detail panel)
  * - `checkout` — switch the work tree to a local or remote-tracking branch
  * - `create-branch` — create + check out a new branch (`git switch -c`)
+ * - `enhance-prompt` — rewrite a composer draft through the session's own model
  */
 import { isAbsolute } from 'node:path'
 import { MAX_PATHS_PER_REQUEST, type BranchCache } from './git-branch.ts'
@@ -14,7 +15,8 @@ import { checkoutBranch, createBranch } from './git-checkout.ts'
 import { fetchCommitDetail, type GitCommitDetail } from './git-commit-detail.ts'
 import { DEFAULT_GRAPH_PAGE_SIZE, MAX_GRAPH_PAGE_SIZE, fetchCommitGraph, type GitGraphSnapshot } from './git-graph.ts'
 import type { GitRefKind } from './git-ref.ts'
-import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts'
+import { enhancePrompt } from './prompt-enhance.ts'
+import type { Context, PluginHttpRequest, PluginHttpResponse } from './context-types.ts'
 import { WorkspaceGitError, readJsonBody, writeError, writeOk } from './wire.ts'
 
 /** Route path prefix; the API method is the final segment. */
@@ -247,6 +249,7 @@ export async function resolveCommit(payload: unknown): Promise<GitCommitDetail> 
 export function createApiHandler(
   cache: BranchCache,
   fence: (req: PluginHttpRequest) => boolean,
+  ctx: Context,
 ): (req: PluginHttpRequest, res: PluginHttpResponse) => Promise<void> {
   return async (req, res): Promise<void> => {
     if (!fence(req)) {
@@ -287,6 +290,10 @@ export function createApiHandler(
       }
       if (method === 'create-branch') {
         writeOk(res, await resolveCreateBranch(cache, payload))
+        return
+      }
+      if (method === 'enhance-prompt') {
+        writeOk(res, await enhancePrompt(ctx, payload))
         return
       }
       throw new WorkspaceGitError('bad-request', `unknown workspace-git API method "${method}"`, 404)

@@ -58,7 +58,7 @@ export function apply(ctx: Context): void {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: API_PREFIX,
-      handler: createApiHandler(cache, fence),
+      handler: createApiHandler(cache, fence, ctx),
     }),
     'dsh-workspace-git: /workspace-git/api routes',
   )
