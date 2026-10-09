@@ -29,7 +29,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { checkoutBranch, createBranch, fetchRefs, WorkspaceGitApiError, type RefAnswer, type RefKind } from './api.ts'
+import { checkoutBranch, createBranch, fetchRefs, fetchWorkTreeStatus, WorkspaceGitApiError, type RefAnswer, type RefKind, type WorkTreeStatus } from './api.ts'
 import { BranchIcon } from './BranchIcon.tsx'
 import { GraphIcon } from './GraphIcon.tsx'
 import { NewBranchIcon } from './NewBranchIcon.tsx'
@@ -54,8 +54,18 @@ export interface BranchSelectProps {
   store?: BranchStore
 }
 
-/** How long a switch-failure toast stays on the trigger, in milliseconds. */
-const ERROR_FEEDBACK_MS = 2_400
+/**
+ * How long a switch-failure notice stays visible, in milliseconds.
+ *
+ * A FAILED switch must not look like a no-op, which is exactly what a short
+ * trigger tooltip produced: the pill kept its old name (correct — HEAD did not
+ * move) and the graph stayed put (also correct), so the only evidence was a
+ * `title` that required a hover and vanished after ~2.4s. The notice is now
+ * rendered inline below the trigger and persists long enough to read, while
+ * still clearing on its own so a stale failure cannot linger over a later
+ * successful switch.
+ */
+const ERROR_FEEDBACK_MS = 12_000
 
 /**
  * Default visible rows per group (local / remote) when the search box is empty.
@@ -142,6 +152,21 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   const [createName, setCreateName] = useState('')
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  /**
+   * The pending switch parked behind the dirty-tree guard: the target ref plus
+   * the status that triggered the dialog. Non-null means the dialog is open.
+   *
+   * The target is captured HERE rather than re-read at confirm time: the guard
+   * exists to describe one specific switch, and a list that re-derived its
+   * target from current state could confirm a different switch than the one the
+   * user was shown.
+   */
+  const [guard, setGuard] = useState<{
+    name: string
+    kind: RefKind
+    status: WorkTreeStatus
+  } | null>(null)
+  const [guardBusy, setGuardBusy] = useState(false)
   const [fixedPos, setFixedPos] = useState<CSSProperties | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const rootRef = useRef<HTMLSpanElement | null>(null)
@@ -293,13 +318,12 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   const branch = answer.branch
   const selectedName = refs?.find(entry => entry.current)?.name
 
-  const switchTo = (name: string, kind: RefKind): void => {
+  /**
+   * Actually run the switch. Split out of {@link switchTo} so the guard dialog
+   * can call it after the user confirms, without re-running the pre-check.
+   */
+  const performSwitch = (name: string, kind: RefKind): void => {
     if (cwd === undefined || cwd === '' || switching) return
-    if (kind === 'local' && (name === selectedName || name === branch)) {
-      close()
-      return
-    }
-    close()
     setSwitching(true)
     setSwitchError(null)
     void checkoutBranch(cwd, name, kind)
@@ -321,6 +345,64 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
         timer.current = setTimeout(() => { setSwitchError(null) }, ERROR_FEEDBACK_MS)
       })
       .finally(() => { setSwitching(false) })
+  }
+
+  /**
+   * Requested switch: check the work tree for uncommitted work FIRST, and only
+   * switch outright when it is clean.
+   *
+   * Why a pre-check instead of letting `git switch` fail: git refuses a switch
+   * that would overwrite local modifications and prints its list to stderr, so
+   * without this the user's only feedback is an error AFTER the fact — and for
+   * the overwhelmingly common case (a dirty tree the user intends to keep) the
+   * question "switch anyway, or stay?" is never even asked. Here the user sees
+   * the files and decides.
+   *
+   * The check is best-effort: if it fails (no git binary, a network blip), we
+   * fall through to the plain switch rather than blocking a legitimate action
+   * behind a diagnostic that could not run. git's own refusal still protects
+   * the work in that case.
+   */
+  const switchTo = (name: string, kind: RefKind): void => {
+    if (cwd === undefined || cwd === '' || switching) return
+    if (kind === 'local' && (name === selectedName || name === branch)) {
+      close()
+      return
+    }
+    close()
+    const target = cwd
+    void fetchWorkTreeStatus(target)
+      .then((status) => {
+        // Untracked files alone cannot block `git switch`, but they ARE
+        // uncommitted work the user may not realise is there, so they still
+        // warrant the dialog. `changes` covers both kinds.
+        if (status.changes.length === 0) {
+          performSwitch(name, kind)
+          return
+        }
+        setGuard({ name, kind, status })
+      })
+      .catch(() => {
+        // Guard unavailable: proceed. Never turn a failed diagnostic into a
+        // blocked switch.
+        performSwitch(name, kind)
+      })
+  }
+
+  /** Confirm the parked switch from the guard dialog. */
+  const confirmGuardSwitch = (): void => {
+    if (guard === null || guardBusy) return
+    const { name, kind } = guard
+    setGuardBusy(true)
+    setGuard(null)
+    setGuardBusy(false)
+    performSwitch(name, kind)
+  }
+
+  /** Dismiss the guard: keep the working tree as it is, switch nothing. */
+  const cancelGuard = (): void => {
+    if (guardBusy) return
+    setGuard(null)
   }
 
   const openGraph = (): void => {
@@ -756,6 +838,45 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
     <span ref={rootRef} style={{ display: 'inline-flex', position: 'relative' }}>
       <Tooltip label={title} side="top">{trigger}</Tooltip>
       {menu}
+      {/*
+        A failed switch used to be invisible: the pill keeps its old name (HEAD
+        did not move, so that is correct) and the only report was a trigger
+        tooltip that needed a hover and cleared in ~2.4s. Git's refusal is the
+        interesting part — "your local changes would be overwritten" tells the
+        user exactly what to do — so it is rendered as a persistent notice.
+
+        Absolutely positioned so it can never shift the composer's inline row
+        (this seat is a flex child beside the mode controls), and
+        `pointerEvents: none` so it cannot swallow clicks aimed at the pill.
+      */}
+      {switchError !== null ? (
+        <div
+          data-workspace-git-switch-error=""
+          role="status"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            zIndex: 30,
+            maxWidth: '320px',
+            padding: '6px 10px',
+            borderRadius: '6px',
+            border: '1px solid var(--dsw-alias-state-error-primary)',
+            background: 'var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2))',
+            boxShadow: '0 6px 18px rgba(0, 0, 0, 0.16)',
+            color: 'var(--dsw-alias-state-error-primary)',
+            fontSize: '12px',
+            lineHeight: '17px',
+            whiteSpace: 'pre-wrap',
+            pointerEvents: 'none',
+          }}
+        >
+          <strong style={{ display: 'block', marginBottom: '2px' }}>
+            {label('switchFailed', 'Switch failed')}
+          </strong>
+          {switchError}
+        </div>
+      ) : null}
       {cwd !== undefined && cwd !== '' ? (
         <GitGraphDialog
           open={graphOpen}
@@ -820,6 +941,122 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
               </button>
             </div>
           </form>
+        </Modal>
+      ) : null}
+      {guard !== null ? (
+        <Modal
+          open
+          onClose={cancelGuard}
+          title={label('switchDirtyTitle', 'Uncommitted changes')}
+          closeLabel={label('cancel', 'Cancel')}
+          className="workspace-git-switch-guard-dialog"
+          contentClassName="workspace-git-switch-guard-modal"
+        >
+          <div
+            data-workspace-git-switch-guard=""
+            style={{ display: 'flex', flexDirection: 'column', gap: '12px', minWidth: 0 }}
+          >
+            <div style={{ fontSize: '13px', lineHeight: '20px', color: 'var(--dsw-alias-label-secondary)' }}>
+              {label(
+                'switchDirtyIntro',
+                'This workspace has uncommitted changes. Switching to "{branch}" may fail or carry them along.',
+              ).replace('{branch}', guard.name)}
+            </div>
+            {/* The file list is the whole point of the dialog: the user cannot
+                decide without seeing WHAT is dirty. It scrolls rather than
+                growing the modal, because a real tree can list hundreds of
+                paths (a stray node_modules would otherwise fill the screen). */}
+            <div
+              data-workspace-git-switch-guard-list=""
+              style={{
+                maxHeight: 'min(280px, 40vh)',
+                overflowY: 'auto',
+                overscrollBehavior: 'contain',
+                border: '1px solid var(--dsw-alias-border-l2)',
+                borderRadius: '8px',
+                padding: '8px 10px',
+                fontSize: '12px',
+                lineHeight: '18px',
+                fontFamily: 'var(--ds-font-family-code, monospace)',
+              }}
+            >
+              {guard.status.changes.map((change) => (
+                <div
+                  key={change.path}
+                  data-workspace-git-switch-guard-file=""
+                  data-untracked={change.untracked ? '' : undefined}
+                  style={{
+                    display: 'flex',
+                    gap: '8px',
+                    alignItems: 'baseline',
+                    minWidth: 0,
+                  }}
+                >
+                  <span style={{
+                    flex: 'none',
+                    color: change.untracked
+                      ? 'var(--dsw-alias-state-success-primary)'
+                      : 'var(--dsw-alias-state-warn-primary)',
+                  }}
+                  >
+                    {change.untracked ? label('switchDirtyUntracked', 'new') : change.status.trim() || 'M'}
+                  </span>
+                  <span style={{
+                    minWidth: 0,
+                    overflowWrap: 'anywhere',
+                    color: 'var(--dsw-alias-label-primary)',
+                  }}
+                  >
+                    {change.path}
+                  </span>
+                </div>
+              ))}
+              {guard.status.truncated ? (
+                <div style={{ color: 'var(--dsw-alias-label-tertiary)', marginTop: '6px' }}>
+                  {label('switchDirtyMore', '…and {n} more').replace(
+                    '{n}',
+                    String(guard.status.total - guard.status.changes.length),
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                type="button"
+                data-workspace-git-switch-guard-cancel=""
+                onClick={cancelGuard}
+                style={{
+                  border: '1px solid var(--dsw-alias-border-l2)',
+                  borderRadius: '8px',
+                  padding: '5px 14px',
+                  background: 'transparent',
+                  color: 'var(--dsw-alias-label-primary)',
+                  font: 'inherit',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                {label('switchDirtyCancel', 'Keep my changes')}
+              </button>
+              <button
+                type="button"
+                data-workspace-git-switch-guard-confirm=""
+                onClick={confirmGuardSwitch}
+                style={{
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '5px 14px',
+                  background: 'var(--dsw-alias-interactive-bg-hover)',
+                  color: 'var(--dsw-alias-label-primary)',
+                  font: 'inherit',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                {label('switchDirtyConfirm', 'Switch anyway')}
+              </button>
+            </div>
+          </div>
         </Modal>
       ) : null}
     </span>

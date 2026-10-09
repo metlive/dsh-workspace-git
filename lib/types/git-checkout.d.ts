@@ -37,3 +37,59 @@ export declare function checkoutBranch(path: string, branch: string, kind?: GitR
 export declare function createBranch(path: string, branch: string): Promise<{
     branch: string;
 }>;
+/** One uncommitted entry, as the switch guard reports it. */
+export interface WorkTreeChange {
+    /** Path relative to the work-tree root, POSIX-separated. */
+    path: string;
+    /**
+     * Two-letter porcelain status (`M `, ` M`, `??`, `D `, `R `, …). The client
+     * only needs the first two characters; it renders the label itself.
+     */
+    status: string;
+    /** Whether the file is untracked (`??`), which the UI groups separately. */
+    untracked: boolean;
+}
+/** The work tree's cleanliness, as the switch guard reports it. */
+export interface WorkTreeStatus {
+    /** Whether the repository root that was inspected. */
+    workTree: string;
+    /** The branch HEAD is on, or null when detached. */
+    branch: string | null;
+    /** Uncommitted entries (tracked modifications + untracked files). */
+    changes: WorkTreeChange[];
+    /**
+     * Whether {@link changes} was truncated at {@link MAX_STATUS_ENTRIES}. The UI
+     * says "and N more" rather than rendering an unbounded list.
+     */
+    truncated: boolean;
+    /** Total entry count before truncation. */
+    total: number;
+}
+/**
+ * Cap on reported entries. A dirty tree can hold tens of thousands of paths
+ * (a stray `node_modules`), and this rides a click on a menu row — the dialog
+ * only needs to say "this tree is dirty, here is a sample".
+ */
+export declare const MAX_STATUS_ENTRIES = 200;
+/**
+ * Read the work tree's uncommitted state, for the pre-switch guard.
+ *
+ * `git status --porcelain=v1 -z` is the machine-stable form: `-z` NUL-terminates
+ * entries and, crucially, does NOT quote or escape paths, so a filename with a
+ * space, quote, or newline survives intact. With renames (`R`), `-z` emits the
+ * NEW path first and the source second as two separate NUL-terminated fields
+ * sharing one status record — the second field MUST be consumed or the parse
+ * desynchronises and every later entry is garbage. That consumption is the one
+ * subtle part of this function.
+ *
+ * `--untracked-files=all` lists individual files rather than collapsing a new
+ * directory to `dir/`, because the dialog names files the user will recognise.
+ *
+ * This is a READ. It never mutates the work tree — the guard only informs the
+ * user; discarding is an explicit, separate action.
+ *
+ * @param path - absolute workspace path (the repository may be an ancestor).
+ * @returns the status, or `changes: []` for a clean tree.
+ * @throws WorkspaceGitError when the path is not a repository or git fails.
+ */
+export declare function workTreeStatus(path: string): Promise<WorkTreeStatus>;

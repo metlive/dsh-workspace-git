@@ -5,15 +5,16 @@
  * - `refs` — local + remote branch list for the composer menu
  * - `graph` — commit-graph page via `git log` (needs a git binary)
  * - `commit` — one commit's message + changed files (detail panel)
+ * - `status` — the work tree's uncommitted state (pre-switch guard)
  * - `checkout` — switch the work tree to a local or remote-tracking branch
  * - `create-branch` — create + check out a new branch (`git switch -c`)
  * - `enhance-prompt` — rewrite a composer draft through the session's own model
  */
 import { isAbsolute } from 'node:path'
 import { MAX_PATHS_PER_REQUEST, type BranchCache } from './git-branch.ts'
-import { checkoutBranch, createBranch } from './git-checkout.ts'
+import { checkoutBranch, createBranch, workTreeStatus, type WorkTreeStatus } from './git-checkout.ts'
 import { fetchCommitDetail, type GitCommitDetail } from './git-commit-detail.ts'
-import { DEFAULT_GRAPH_PAGE_SIZE, MAX_GRAPH_PAGE_SIZE, fetchCommitGraph, type GitGraphSnapshot } from './git-graph.ts'
+import { DEFAULT_GRAPH_PAGE_SIZE, MAX_GRAPH_PAGE_SIZE, fetchCommitGraph, fetchRefTips, type GitGraphSnapshot } from './git-graph.ts'
 import type { GitRefKind } from './git-ref.ts'
 import { enhancePrompt } from './prompt-enhance.ts'
 import type { Context, PluginHttpRequest, PluginHttpResponse } from './context-types.ts'
@@ -166,6 +167,21 @@ export async function resolveGraph(payload: unknown): Promise<GitGraphSnapshot> 
 }
 
 /**
+ * Resolve every branch/tag tip of one repository.
+ *
+ * The graph is paginated and `--decorate` only names a ref on the commit it
+ * points at, so the client cannot learn a branch's tip from the commits alone
+ * once that tip falls on an unloaded page. Filtering by branch needs the tip, so
+ * this is its own method rather than an extra field on the page.
+ * @param payload - the parsed request body.
+ * @returns short ref name -> object id.
+ */
+export async function resolveTips(payload: unknown): Promise<{ tips: Record<string, string> }> {
+  const path = parseRefsRequest(payload)
+  return { tips: await fetchRefTips(path) }
+}
+
+/**
  * Narrow a checkout request: absolute path + branch name + optional kind.
  * @param payload - the parsed request body.
  * @returns path, branch, and kind (defaults to local).
@@ -215,6 +231,21 @@ export async function resolveCreateBranch(
   const result = await createBranch(path, branch)
   cache.invalidate(path)
   return result
+}
+
+/**
+ * Read the work tree's uncommitted state for the pre-switch guard.
+ *
+ * A READ, deliberately separate from `checkout`: the client asks first, shows
+ * the user what is dirty, and only then decides whether to switch. Folding the
+ * check into the switch would make the guard unobservable — the dialog needs
+ * the list BEFORE anything is attempted.
+ * @param payload - the parsed request body.
+ * @returns the status (an empty `changes` array when the tree is clean).
+ */
+export async function resolveStatus(payload: unknown): Promise<WorkTreeStatus> {
+  const path = parseRefsRequest(payload)
+  return workTreeStatus(path)
 }
 
 /**
@@ -280,8 +311,16 @@ export function createApiHandler(
         writeOk(res, await resolveGraph(payload))
         return
       }
+      if (method === 'tips') {
+        writeOk(res, await resolveTips(payload))
+        return
+      }
       if (method === 'commit') {
         writeOk(res, await resolveCommit(payload))
+        return
+      }
+      if (method === 'status') {
+        writeOk(res, await resolveStatus(payload))
         return
       }
       if (method === 'checkout') {

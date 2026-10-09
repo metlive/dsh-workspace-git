@@ -65,6 +65,39 @@ export interface CheckoutResult {
     /** The branch that is now checked out. */
     branch: string;
 }
+/** One uncommitted entry, as the pre-switch guard reports it. */
+export interface WorkTreeChange {
+    /** Path relative to the work-tree root. */
+    path: string;
+    /** Two-letter porcelain status (`M `, ` M`, `??`, …). */
+    status: string;
+    /** Whether the file is untracked (`??`). */
+    untracked: boolean;
+}
+/** The work tree's uncommitted state. */
+export interface WorkTreeStatus {
+    /** The repository root that was inspected. */
+    workTree: string;
+    /** The branch HEAD is on, or null when detached. */
+    branch: string | null;
+    /** Uncommitted entries. */
+    changes: WorkTreeChange[];
+    /** Whether `changes` was truncated; the dialog then says "and N more". */
+    truncated: boolean;
+    /** Total entry count before truncation. */
+    total: number;
+}
+/**
+ * Read the work tree's uncommitted state, BEFORE attempting a switch.
+ *
+ * Deliberately a separate call from {@link checkoutBranch}: the guard has to
+ * show the user what is dirty and wait for a decision, so the check cannot be
+ * folded into the write.
+ * @param path - the absolute workspace directory.
+ * @param signal - abort signal.
+ * @returns the status (empty `changes` when the tree is clean).
+ */
+export declare function fetchWorkTreeStatus(path: string, signal?: AbortSignal): Promise<WorkTreeStatus>;
 /**
  * Switch the work tree at `path` to the given branch.
  *

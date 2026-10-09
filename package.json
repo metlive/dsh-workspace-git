@@ -72,7 +72,10 @@
     "bundle": "tsdown",
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node test/mount-client-bundle.mjs && node test/prompt-enhance-host.mjs && node test/commit-body-styles.mjs",
-    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
+    "test": "node test/mount-client-bundle.mjs && node test/prompt-enhance-host.mjs && node test/commit-body-styles.mjs && node test/git-graph-filter.mjs && node test/worktree-status.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "test:graph-host": "node test/git-graph-host.mjs",
+    "verify:graph-filter": "node test/verify-graph-filter.mjs",
+    "verify:branch-switch": "node test/verify-branch-switch.mjs"
   }
 }
