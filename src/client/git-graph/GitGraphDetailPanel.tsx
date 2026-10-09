@@ -22,6 +22,7 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { fetchCommitDetail } from './api.ts'
+import { ensureCommitBodyStyles } from './commitBodyStyles.ts'
 import { buildFileTree, type FileTreeNode } from './fileTree.ts'
 import { FileKindIcon } from './FileKindIcon.tsx'
 import type { GitCommitDetail } from './types.ts'
@@ -226,6 +227,10 @@ export function GitGraphDetailPanel({
   ])
 
   useEffect(() => {
+    ensureCommitBodyStyles()
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -377,8 +382,11 @@ export function GitGraphDetailPanel({
                 ...metaRow,
                 whiteSpace: 'pre-wrap',
                 marginBottom: detail.body !== '' ? 8 : 10,
-                fontSize: 13,
-                lineHeight: '20px',
+                // Same 12px pin as the body below (see commitBodyStyles.ts):
+                // the rail is a 12px surface, and the message is one block, so
+                // a 13px subject above a 12px body would read as a mismatch.
+                fontSize: 12,
+                lineHeight: '18px',
                 fontWeight: 500,
                 color: 'var(--dsw-alias-label-primary)',
               }}
@@ -389,11 +397,12 @@ export function GitGraphDetailPanel({
                 // The body is authored prose: render it as Markdown so lists,
                 // fenced code, and links read as such instead of as literal
                 // punctuation. `MarkdownText` supplies its own block spacing;
-                // the wrapper only carries the bottom margin the old single-<p>
-                // version had, so the author/time rows below keep their gap.
+                // the wrapper carries the bottom margin the old single-<p>
+                // version had, and the size pin the Markdown sheet needs
+                // (a `font:` shorthand per heading defeats plain inheritance).
                 <div
                   data-workspace-git-commit-body=""
-                  style={{ marginBottom: 10, fontSize: 13 }}
+                  style={{ marginBottom: 10 }}
                 >
                   <MarkdownText text={detail.body} labels={markdownLabels} />
                 </div>

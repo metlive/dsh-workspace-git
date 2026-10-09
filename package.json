@@ -72,7 +72,7 @@
     "bundle": "tsdown",
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node test/mount-client-bundle.mjs && node test/prompt-enhance-host.mjs",
+    "test": "node test/mount-client-bundle.mjs && node test/prompt-enhance-host.mjs && node test/commit-body-styles.mjs",
     "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   }
 }
