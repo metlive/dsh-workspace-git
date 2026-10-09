@@ -5,12 +5,10 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { findWorkTree } from './git-graph.ts'
+import { OBJECT_ID } from './git-ref.ts'
 import { WorkspaceGitError } from './wire.ts'
 
 const execFileAsync = promisify(execFile)
-
-/** Full object id (SHA-1 or SHA-256). */
-const OBJECT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i
 
 export interface GitCommitDetail {
   hash: string
@@ -89,15 +87,21 @@ export async function fetchCommitDetail(path: string, hash: string): Promise<Git
       ),
       execFileAsync(
         'git',
-        ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', hash],
+        // `-z` is required, not cosmetic. Without it git applies C-style
+        // QUOTING to any path containing a byte outside plain ASCII: a file
+        // named `中文文件名.txt` comes back as the literal
+        // `"\344\270\255\346\226\207..."`, and `quote"name.txt` comes back
+        // wrapped and backslash-escaped. Those strings then reach the detail
+        // panel's file tree as unreadable mojibake that matches no real path.
+        // With `-z`, paths are emitted verbatim and NUL-terminated. Note the
+        // split below therefore must NOT trim: a trailing space is a legal and
+        // significant filename character.
+        ['diff-tree', '--root', '--no-commit-id', '--name-only', '-r', '-z', hash],
         execOpts,
       ),
     ])
     const meta = parseShowRecord(showOut)
-    const files = filesOut
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
+    const files = filesOut.split('\0').filter(name => name.length > 0)
     return { ...meta, files }
   } catch (error) {
     if (error instanceof WorkspaceGitError) throw error

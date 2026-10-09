@@ -17,7 +17,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import {
-  isRemoteHeadRef,
   mergeRefNames,
   parseGitDirPointer,
   parseHead,
@@ -179,7 +178,16 @@ async function walkLooseRefs(root: string, kind: GitRefKind): Promise<GitRefCand
         if (info.isDirectory()) {
           await walk(full, name, depth + 1)
         } else if (info.isFile()) {
-          if (kind === 'remote' && isRemoteHeadRef(name)) continue
+          // A remote's symbolic HEAD (`origin/HEAD`) is stored as a loose ref
+          // whose CONTENT is `ref: refs/heads/main`; an ordinary branch stores a
+          // SHA. Reading the content is what distinguishes them, so a real
+          // branch merely NAMED `origin/foo/HEAD` is still listed. Falling back
+          // to the name suffix here would silently hide such a branch from the
+          // picker, which is exactly the bug this avoids.
+          if (kind === 'remote') {
+            const content = await readIfPossible(full)
+            if (content !== undefined && content.trimStart().startsWith('ref:')) continue
+          }
           loose.push({ name, kind, mtimeMs: info.mtimeMs })
         }
       } catch {
@@ -236,10 +244,30 @@ export class BranchCache {
   private readonly inflight = new Map<string, Promise<GitHead | undefined>>()
   private readonly refEntries = new Map<string, RefCacheEntry>()
   private readonly refInflight = new Map<string, Promise<GitRefEntry[]>>()
+  /**
+   * Per-path generation, bumped by {@link invalidate}.
+   *
+   * Deleting a cache entry is not enough to make an invalidation stick: a walk
+   * already in flight holds no reference to the map, so its `.then` would
+   * re-insert the PRE-checkout answer under a fresh TTL. The window is real —
+   * `resolveCheckout` invalidates right after `git switch` returns, while the
+   * sidebar's `branches` poll for the same path may be mid-walk. The stale head
+   * would then be served for the whole TTL, showing the OLD branch immediately
+   * after a successful switch.
+   *
+   * A lookup captures the generation it started under and only publishes when
+   * it is still current.
+   */
+  private readonly epoch = new Map<string, number>()
   private disposed = false
 
   /** @param ttlMs - freshness window; overridable for tests. */
   constructor(private readonly ttlMs: number = CACHE_TTL_MS) {}
+
+  /** The current generation for one path (0 when never invalidated). */
+  private epochOf(path: string): number {
+    return this.epoch.get(path) ?? 0
+  }
 
   /**
    * The branch list of the repository containing `path`, cached and
@@ -257,10 +285,13 @@ export class BranchCache {
     const pending = this.refInflight.get(path)
     if (pending !== undefined) return pending
 
+    const epoch = this.epochOf(path)
     const task = findRefs(path)
       .catch(() => [])
       .then((refs) => {
-        if (!this.disposed) this.refEntries.set(path, { refs, expiresAt: Date.now() + this.ttlMs })
+        if (!this.disposed && this.epochOf(path) === epoch) {
+          this.refEntries.set(path, { refs, expiresAt: Date.now() + this.ttlMs })
+        }
         return refs
       })
       .finally(() => {
@@ -290,11 +321,17 @@ export class BranchCache {
     const pending = this.inflight.get(path)
     if (pending !== undefined) return pending
 
+    // Captured BEFORE the walk starts, so an invalidate that lands mid-walk is
+    // detected by the mismatch in the `.then` below.
+    const epoch = this.epochOf(path)
     const task = findHead(path)
       .catch(() => undefined)
       .then((head) => {
-        // A dispose that lands mid-flight must not repopulate the cache.
-        if (!this.disposed) this.entries.set(path, { head, expiresAt: Date.now() + this.ttlMs })
+        // Publish only if BOTH conditions hold: the cache is alive, and no
+        // invalidate happened while this walk was running (see `epoch`).
+        if (!this.disposed && this.epochOf(path) === epoch) {
+          this.entries.set(path, { head, expiresAt: Date.now() + this.ttlMs })
+        }
         return head
       })
       .finally(() => {
@@ -321,14 +358,25 @@ export class BranchCache {
   /**
    * Drop the cached answers for one path (or every path), so the next lookup
    * re-reads HEAD / refs. Used after a successful checkout.
+   *
+   * Bumping the epoch is what makes this stick: it disowns any walk already in
+   * flight for the path, which would otherwise re-publish the pre-checkout
+   * answer (see the `epoch` field). `inflight` is deliberately NOT cleared —
+   * the shared promise is still a valid de-duplication handle for callers
+   * already awaiting it, and it removes itself in its own `finally`.
    * @param path - absolute path to invalidate; omit to clear the whole cache.
    */
   invalidate(path?: string): void {
     if (path === undefined) {
       this.entries.clear()
       this.refEntries.clear()
+      // Every path's in-flight walk must be disowned too, so bump the epochs we
+      // know about. A path never seen needs no bump: its walk captures 0 and no
+      // invalidate can have raced it.
+      for (const key of this.epoch.keys()) this.epoch.set(key, this.epochOf(key) + 1)
       return
     }
+    this.epoch.set(path, this.epochOf(path) + 1)
     this.entries.delete(path)
     this.refEntries.delete(path)
   }
@@ -345,5 +393,6 @@ export class BranchCache {
     this.inflight.clear()
     this.refEntries.clear()
     this.refInflight.clear()
+    this.epoch.clear()
   }
 }

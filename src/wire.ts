@@ -12,6 +12,13 @@ export type WorkspaceGitErrorCode =
   | 'forbidden'
   | 'too-large'
   | 'internal'
+  /**
+   * A route segment that names no API method. Distinct from `bad-request` so
+   * the status is carried by the CODE rather than by an explicit argument:
+   * `statusOf` maps it to 404, and a client can tell "you called a URL that
+   * does not exist" from "your body was malformed" without guessing.
+   */
+  | 'not-found'
   // Prompt enhancement refusals. Each is a distinct, user-explicable outcome:
   // the client shows the reason and leaves the composer untouched.
   | 'empty-draft'
@@ -75,6 +82,7 @@ function statusOf(error: WorkspaceGitError): number {
     case 'internal': return 500
     case 'draft-too-large': return 413
     case 'session-not-found': return 404
+    case 'not-found': return 404
     case 'no-llm': return 503
     case 'timeout': return 504
     // Model-side refusals: the request was fine, the call was not.
@@ -83,6 +91,26 @@ function statusOf(error: WorkspaceGitError): number {
     case 'model-error': return 502
     default: return 400
   }
+}
+
+/**
+ * The HTTP status to answer with for one failure.
+ *
+ * The constructor's `status` is honoured ONLY when it differs from the code's
+ * canonical mapping. That inversion is the point: `statusOf` stays the single
+ * source of truth for a code — so the many sites that pass `400` alongside
+ * `bad-request` are redundant-but-consistent — while a site that genuinely
+ * needs something else (routing that is `bad-request`-shaped but answers 404)
+ * can no longer be silently downgraded by the `default: 400` branch. That
+ * silent downgrade is what happened before: the argument was accepted and then
+ * discarded, so an unknown API method answered 400 despite being written 404.
+ * @param error - the failure to map.
+ * @returns the HTTP status.
+ */
+function httpStatusOf(error: WorkspaceGitError): number {
+  const mapped = statusOf(error)
+  if (error.status !== 400 && error.status !== mapped) return error.status
+  return mapped
 }
 
 /**
@@ -97,7 +125,7 @@ export function writeError(res: PluginHttpResponse, error: unknown): void {
   const failure = error instanceof WorkspaceGitError
     ? error
     : new WorkspaceGitError('internal', error instanceof Error ? error.message : String(error))
-  writeJson(res, statusOf(failure), { ok: false, error: { code: failure.code, message: failure.message } })
+  writeJson(res, httpStatusOf(failure), { ok: false, error: { code: failure.code, message: failure.message } })
 }
 
 /**

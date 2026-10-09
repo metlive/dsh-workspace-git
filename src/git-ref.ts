@@ -19,8 +19,14 @@ const HEAD_REF = /^ref:\s+(.+?)\s*$/
 /** The `gitdir: <path>` line of a `.git` FILE (linked worktree / submodule). */
 const GITDIR_POINTER = /^gitdir:\s*(.+?)\s*$/
 
-/** A raw object id: 40 hex (SHA-1) or 64 hex (SHA-256 repositories). */
-const OBJECT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i
+/**
+ * A raw object id: 40 hex (SHA-1) or 64 hex (SHA-256 repositories).
+ *
+ * Exported because more than one module must validate a commit id, and two
+ * copies of this literal can drift apart silently — a divergence would show up
+ * as one code path accepting an id another rejects, not as a compile error.
+ */
+export const OBJECT_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i
 
 /** How many hex characters of a detached HEAD to show. */
 export const SHORT_ID_LENGTH = 7
@@ -98,25 +104,6 @@ export function parseGitDirPointer(pointerText: string): string | undefined {
   return target === undefined || target === '' ? undefined : target
 }
 
-/**
- * Pick the branch to display when several repositories are in play.
- *
- * Only the first is ever used today (one workspace = one repository), but the
- * rule is stated once here so callers cannot drift: a real branch beats a
- * detached id, because the branch name carries more information.
- * @param heads - candidate heads in discovery order.
- * @returns the head to show, or undefined when there are none.
- */
-export function preferBranch(heads: readonly (GitHead | undefined)[]): GitHead | undefined {
-  let detached: GitHead | undefined
-  for (const head of heads) {
-    if (head === undefined) continue
-    if (!head.detached) return head
-    detached ??= head
-  }
-  return detached
-}
-
 /** Whether a listed ref is a local branch or a remote-tracking branch. */
 export type GitRefKind = 'local' | 'remote'
 
@@ -146,21 +133,15 @@ export interface GitRefEntry {
 }
 
 /**
- * Whether a remote-tracking name is the remote's symbolic HEAD (`origin/HEAD`),
- * which is not useful in a branch picker.
- * @param name - the name under `refs/remotes/` (e.g. `origin/HEAD`).
- */
-export function isRemoteHeadRef(name: string): boolean {
-  return name === 'HEAD' || name.endsWith('/HEAD')
-}
-
-/**
  * Extract local and remote-tracking branch names from a `packed-refs` file.
  *
  * `packed-refs` is git's compaction of `refs/` into one file: a header line
  * (`# pack-refs with: …`), optional `^<sha>` peeled-tag lines that belong to the
- * line above them, and `<sha> <refname>` rows. Tags are ignored; remote
- * symbolic HEAD refs (names ending in `/HEAD`) are skipped.
+ * line above them, and `<sha> <refname>` rows. Tags are ignored.
+ *
+ * Symbolic remote HEAD refs are NOT handled here, because they cannot occur:
+ * packing requires a ref with a literal SHA, and `origin/HEAD` is symbolic. See
+ * the comment at the `refs/remotes/` branch below.
  *
  * A loose ref file always overrides its packed entry, so the caller merges the
  * two — but for LISTING purposes a duplicate name is harmless and de-duplication
@@ -186,7 +167,13 @@ export function parsePackedRefs(text: string): GitRefCandidate[] {
     }
     if (ref.startsWith(remotes)) {
       const name = ref.slice(remotes.length)
-      if (name !== '' && !isRemoteHeadRef(name)) out.push({ name, kind: 'remote' })
+      // No head-ref filtering here, deliberately: `packed-refs` only ever holds
+      // refs with a literal SHA, so a SYMBOLIC `origin/HEAD` (whose content is
+      // `ref: refs/heads/main`) is never packed and cannot appear. Every `/HEAD`
+      // name in this file is therefore an ordinary branch — `origin/foo/HEAD`
+      // is legal — and filtering on the suffix would drop a real branch. The
+      // symbolic ref is skipped where it actually lives, in the loose walk.
+      if (name !== '') out.push({ name, kind: 'remote' })
     }
   }
   return out

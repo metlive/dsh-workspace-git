@@ -153,22 +153,30 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   /**
-   * The pending switch parked behind the dirty-tree guard: the target ref plus
-   * the status that triggered the dialog. Non-null means the dialog is open.
+   * The pending switch parked behind the dirty-tree guard: the repository, the
+   * target ref, and the status that triggered the dialog. Non-null means the
+   * dialog is open.
    *
-   * The target is captured HERE rather than re-read at confirm time: the guard
-   * exists to describe one specific switch, and a list that re-derived its
-   * target from current state could confirm a different switch than the one the
-   * user was shown.
+   * `path` travels WITH the target rather than being re-read from `cwd` at
+   * confirm time. Both halves of that are deliberate: the guard exists to
+   * describe one specific switch (so a re-derived target could confirm a
+   * different one than the user was shown), and the repository to switch in is
+   * part of that description (so a session change while the dialog is open
+   * cannot redirect the checkout).
    */
   const [guard, setGuard] = useState<{
+    path: string
     name: string
     kind: RefKind
     status: WorkTreeStatus
   } | null>(null)
-  const [guardBusy, setGuardBusy] = useState(false)
   const [fixedPos, setFixedPos] = useState<CSSProperties | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  /**
+   * Generation counter for the pre-switch dirty check. Only the newest click may
+   * act on its result; see {@link switchTo}.
+   */
+  const switchSeq = useRef(0)
   const rootRef = useRef<HTMLSpanElement | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const cwd = useSessions?.((state) => (sessionId === undefined ? undefined : state.byId[sessionId]?.cwd))
@@ -319,16 +327,28 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   const selectedName = refs?.find(entry => entry.current)?.name
 
   /**
-   * Actually run the switch. Split out of {@link switchTo} so the guard dialog
-   * can call it after the user confirms, without re-running the pre-check.
+   * Actually run the switch, in the repository at `path`.
+   *
+   * `path` is a PARAMETER rather than a read of `cwd` from the closure, and
+   * that is load-bearing: the promise chain outlives the render that started
+   * it, so a closure read would target whatever workspace was current when the
+   * click happened. If the seat re-renders for another session while the guard
+   * request is in flight, the checkout would land in the previous repository
+   * while `store.publish` labelled the new one.
+   *
+   * @param path - absolute workspace directory to switch in.
+   * @param name - short local name, or `remote/branch` for tracking refs.
+   * @param kind - local vs remote-tracking.
+   * @returns whether the switch was actually started (false = one was already
+   *   in flight, so the caller must NOT assume the target was honoured).
    */
-  const performSwitch = (name: string, kind: RefKind): void => {
-    if (cwd === undefined || cwd === '' || switching) return
+  const performSwitch = (path: string, name: string, kind: RefKind): boolean => {
+    if (switching) return false
     setSwitching(true)
     setSwitchError(null)
-    void checkoutBranch(cwd, name, kind)
+    void checkoutBranch(path, name, kind)
       .then((result) => {
-        store?.publish(cwd, { branch: result.branch, detached: false })
+        store?.publish(path, { branch: result.branch, detached: false })
         // Keep the menu's idea of "current" in sync if it is reopened before
         // the next refs fetch.
         setRefs(prev => prev?.map(entry => ({
@@ -345,6 +365,7 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
         timer.current = setTimeout(() => { setSwitchError(null) }, ERROR_FEEDBACK_MS)
       })
       .finally(() => { setSwitching(false) })
+    return true
   }
 
   /**
@@ -370,38 +391,57 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
       return
     }
     close()
-    const target = cwd
-    void fetchWorkTreeStatus(target)
+    const path = cwd
+    /*
+     * Sequence the pre-check. Without this, two quick clicks start two
+     * independent requests whose resolution order the network decides: click A
+     * (slow) then B (fast) and B's dialog opens first, then A's stale response
+     * OVERWRITES it — so the dialog names A and confirming switches to A, the
+     * opposite of the last click. If A's response is instead *clean*, it would
+     * switch the repository outright while B's dialog sat open.
+     *
+     * A generation counter (the same pattern `AgentPresetStore.read` uses) makes
+     * only the newest click able to act. The counter is bumped here, so any
+     * earlier in-flight check is disowned the moment a new one starts.
+     */
+    const seq = ++switchSeq.current
+    void fetchWorkTreeStatus(path)
       .then((status) => {
+        if (seq !== switchSeq.current) return
         // Untracked files alone cannot block `git switch`, but they ARE
         // uncommitted work the user may not realise is there, so they still
         // warrant the dialog. `changes` covers both kinds.
         if (status.changes.length === 0) {
-          performSwitch(name, kind)
+          performSwitch(path, name, kind)
           return
         }
-        setGuard({ name, kind, status })
+        setGuard({ path, name, kind, status })
       })
       .catch(() => {
+        if (seq !== switchSeq.current) return
         // Guard unavailable: proceed. Never turn a failed diagnostic into a
         // blocked switch.
-        performSwitch(name, kind)
+        performSwitch(path, name, kind)
       })
   }
 
-  /** Confirm the parked switch from the guard dialog. */
+  /**
+   * Confirm the parked switch from the guard dialog.
+   *
+   * The dialog is closed FIRST so the user is not left looking at a modal that
+   * no longer describes anything, but the parked target is only discarded once
+   * {@link performSwitch} reports it actually started: if a switch is already in
+   * flight it returns false, and dropping the target there would close the
+   * dialog with no switch, no error and no busy indicator — a silent no-op.
+   */
   const confirmGuardSwitch = (): void => {
-    if (guard === null || guardBusy) return
-    const { name, kind } = guard
-    setGuardBusy(true)
-    setGuard(null)
-    setGuardBusy(false)
-    performSwitch(name, kind)
+    if (guard === null || switching) return
+    const { path, name, kind } = guard
+    if (performSwitch(path, name, kind)) setGuard(null)
   }
 
   /** Dismiss the guard: keep the working tree as it is, switch nothing. */
   const cancelGuard = (): void => {
-    if (guardBusy) return
     setGuard(null)
   }
 

@@ -167,6 +167,80 @@ function clampSkip(skip: number | undefined): number {
 }
 
 /**
+ * Resolve every branch and tag tip to its object id, for one repository.
+ *
+ * Why this exists: `git log --decorate` prints a ref name ONLY on the commit it
+ * points at. The graph is paginated, so a branch whose tip lies on a later page
+ * carries no decoration in the loaded commits — and a client that resolved
+ * branches by looking for a decoration would find nothing and filter to an
+ * empty graph. This map lets the client resolve a selected branch name to its
+ * tip hash regardless of which page is loaded.
+ *
+ * Local branches, remote-tracking branches, and tags are all included. The keys
+ * are the short names the UI shows (`main`, `origin/main`, `v1`), which is the
+ * same spelling `--decorate` produces, so the two agree.
+ *
+ * A repository with no refs yields an empty map rather than an error.
+ * @param path - absolute workspace path.
+ * @returns short ref name -> object id.
+ */
+export async function fetchRefTips(path: string): Promise<Record<string, string>> {
+  const workTree = await findWorkTree(path)
+  if (workTree === undefined) return {}
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      [
+        'for-each-ref',
+        // `%(symref)` is the discriminator for the remote's symbolic HEAD. It
+        // is EMPTY for an ordinary ref, so `refs/remotes/origin/HEAD` (which
+        // points at a branch) reports `refs/heads/main` while a plain branch
+        // that merely happens to be NAMED `.../HEAD` reports nothing.
+        '--format=%(refname:short)%00%(objectname)%00%(symref)',
+        'refs/heads',
+        'refs/remotes',
+        'refs/tags',
+      ],
+      {
+        cwd: workTree,
+        encoding: 'utf8',
+        timeout: 15_000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    )
+    const tips: Record<string, string> = {}
+    for (const line of stdout.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed === '') continue
+      const [name, objectId, symref] = trimmed.split(FIELD_SEP)
+      if (!name || !objectId) continue
+      /*
+       * Skip ONLY symbolic refs.
+       *
+       * The remote's `origin/HEAD` is a symbolic pointer to a branch, so it
+       * would offer a duplicate facet resolving to the same commit. It used to
+       * be detected with `name.endsWith('/HEAD')`, which is WRONG in both
+       * directions: `foo/HEAD` is a perfectly legal ordinary branch name that
+       * the suffix test silently dropped (so it was never offered as a facet
+       * and filtering by it returned an empty graph), while a bare `HEAD`
+       * short name — which the suffix test misses — was let through.
+       *
+       * The `%(symref)` field distinguishes them exactly: non-empty means git
+       * itself resolved this ref through another, which is precisely what a
+       * symbolic HEAD is.
+       */
+      if (symref !== undefined && symref !== '') continue
+      tips[name] = objectId
+    }
+    return tips
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+    if (message.includes('not a git repository')) return {}
+    throw error
+  }
+}
+
+/**
  * Fetch one page of the commit graph for the repository containing `path`.
  * @param path - absolute workspace path.
  * @param maxCount - page size (default 50, max 200).

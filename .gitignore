@@ -6,8 +6,3 @@ lib/*.map
 .superpowers/
 .workbuddy/
 docs/
-# Live-page verification scripts: they drive a REAL running DSH web server over
-# HTTP (see the header of test/verify-graph-filter.mjs) rather than exercising
-# the modules in-process, so they are manual tools and not part of `pnpm test`.
-# Local by intent — they also tend to embed an environment-specific target URL.
-test/verify-*.mjs

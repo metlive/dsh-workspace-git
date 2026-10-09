@@ -294,7 +294,7 @@ export function createApiHandler(
     const pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
     const method = pathname.startsWith(`${API_PREFIX}/`) ? pathname.slice(API_PREFIX.length + 1) : undefined
     if (method === undefined || method.includes('/')) {
-      writeError(res, new WorkspaceGitError('bad-request', 'unknown workspace-git API method', 404))
+      writeError(res, new WorkspaceGitError('not-found', 'unknown workspace-git API method'))
       return
     }
     try {
@@ -335,7 +335,7 @@ export function createApiHandler(
         writeOk(res, await enhancePrompt(ctx, payload))
         return
       }
-      throw new WorkspaceGitError('bad-request', `unknown workspace-git API method "${method}"`, 404)
+      throw new WorkspaceGitError('not-found', `unknown workspace-git API method "${method}"`)
     } catch (error) {
       writeError(res, error)
     }

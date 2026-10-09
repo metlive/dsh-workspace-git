@@ -285,7 +285,6 @@ export async function enhancePrompt(ctx: Context, payload: unknown): Promise<Pro
   }
 
   const controller = new AbortController()
-  const timer = setTimeout(() => { controller.abort() }, TIMEOUT_MS)
   let text = ''
   // Sentinel, NOT 'stop': the loop below only assigns on a real `finish`
   // chunk, so a stream that ends without one (provider dropped the connection,
@@ -295,7 +294,17 @@ export async function enhancePrompt(ctx: Context, payload: unknown): Promise<Pro
   // back over the user's draft.
   let finishKind: string | undefined
   let failureMessage: string | undefined
+  /*
+   * The timer is declared HERE, outside the try, but armed INSIDE it. Arming it
+   * above the try (as this once did) leaks a live 60s timer whenever
+   * `llm.stream(...)` throws SYNCHRONOUSLY — an adapter that validates its
+   * options and throws before returning an iterable never reaches the
+   * `finally` that clears it, so the callback stayed scheduled and fired
+   * `controller.abort()` on a request that was already over.
+   */
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
+    timer = setTimeout(() => { controller.abort() }, TIMEOUT_MS)
     for await (const chunk of llm.stream({
       provider: route.provider,
       model: route.model,
@@ -324,7 +333,7 @@ export async function enhancePrompt(ctx: Context, payload: unknown): Promise<Pro
       502,
     )
   } finally {
-    clearTimeout(timer)
+    if (timer !== undefined) clearTimeout(timer)
   }
 
   if (finishKind === 'error' || finishKind === 'aborted') {
