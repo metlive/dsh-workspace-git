@@ -49,6 +49,38 @@ pm2 restart dsh-web
 dsh plugin --profile web remove dsh-workspace-git
 ```
 
+### 与 `dsh-model-visibility` 并存（不要合并两个包）
+
+模型可见性插件（[`Lzh3070/dsh-model-visibility`](https://github.com/Lzh3070/dsh-model-visibility)，控制模型选择器里显示哪些模型）
+与本插件是**两个独立的 profile 层**，各自 `insert` 自己的条目，互不依赖：
+
+```bash
+dsh plugin --profile web add dsh-model-visibility
+```
+
+`dsh` 会把两个包都追加进 `dsh.profile.bundles`，之后各自包内的 `cordis.patch.yml`
+分别插入 `- id: model-visibility` 和 `- id: workspace-git` 两条行。本仓库**不包含**它。
+
+**为什么不把它合进本包**——三条都是硬约束，不是偏好：
+
+1. **Loader 身份冲突。** 两边都靠固定 id 挂载。嵌套进本包后插件 id 变成
+   `workspace-git/model-visibility`，而它的客户端半以 `id: "model-visibility"` 注册
+   `settings.section`——设置导航图标是按这个 id 反查的，认不出来就退回自己的默认齿轮；
+   `ctx.configForms.get('model-visibility')` 读的也是同一个**已持久化在 profile 里**的命名空间。
+   合并会静默打断这些。
+2. **没有任何代码级接缝。** 两者的 slot、服务、宿主 inject 全都不重合：它占
+   `settings.section`，本包占 `conversation.input.left` / `.input.right` / `.view` /
+   `.hero.agentPreset` / `.session.header.actions`；它客户端 inject 是
+   `slots, locale, configForms, remote, remote.session`，本包是 `slots, sessions, locale`；
+   它宿主 inject 是 `['llm']`（包装 `llm.listModels`），本包是 `['webServer', 'sessions']`。
+   合并只是把两个 `apply` 塞进一个 fiber，零复用。
+3. **会把本包拖回 GitHub tarball。** 本包在 `web` profile 是 `link:` 本地安装、改完源码
+   `pnpm build` 即生效；合进来就意味着每次改动都要走一次 GitHub 发布。
+
+**它们已经能正确协作，无需接线。** 它包装 `ctx.llm.listModels`，所以任何走模型目录的代码
+拿到的都是过滤后的结果——本插件的 `src/prompt-enhance.ts` 正是用 `ctx.get('llm')` 取目录的，
+被隐藏的模型会自动不出现。跨插件协作只走 cordis 服务，这也是本包能作为独立 profile 层安装的前提。
+
 ## 它如何判断分支
 
 直接读 `.git/HEAD`，**不调用 `git` 可执行文件**：
