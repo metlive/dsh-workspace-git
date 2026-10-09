@@ -131,6 +131,14 @@ export function GitGraphSplit({
             files: t('gitGraphChangedFiles', 'Changed files'),
             filesCount: (n) => t('gitGraphFilesCount', '{n} files').replace('{n}', String(n)),
             inBranches: (n) => t('gitGraphInBranches', 'In {n} refs:').replace('{n}', String(n)),
+            markdown: {
+              copy: t('guideCopy', 'Copy'),
+              copied: t('guideCopied', 'Copied'),
+              code: t('codeBlockTitle', 'Code'),
+              wrap: t('codeBlockWrap', 'Wrap'),
+              unwrap: t('codeBlockUnwrap', 'Unwrap'),
+              footnotes: t('guideFootnotes', 'Footnotes'),
+            },
           }}
         />
       ) : null}

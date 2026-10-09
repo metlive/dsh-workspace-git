@@ -10,7 +10,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import React from 'react'
 import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 
-const require_ = createRequire('/Users/metlive/wwwroot/dsh-workspace-git/package.json')
+// Anchored on THIS file rather than the checkout path: a hardcoded absolute
+// path fails on every machine but the one it was written on, and it surfaces as
+// a missing `react-dom` instead of as the path problem it actually is.
+const require_ = createRequire(new URL('../package.json', import.meta.url))
 
 // --- Capture the module the bundle registers -------------------------------
 let registered
