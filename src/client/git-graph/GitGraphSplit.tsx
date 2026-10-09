@@ -14,9 +14,10 @@
  * variables trajectory sets, so column sizing can key off the SPLIT's width
  * (container queries) instead of guessing with viewport media queries.
  */
-import type { CSSProperties, ReactNode } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { GitGraphDetailPanel } from './GitGraphDetailPanel.tsx'
 import { GitGraphPane } from './GitGraphPane.tsx'
+import { EMPTY_FILTER, collectFacets, type FacetKind, type GraphFilter } from './filter.ts'
 import type { GitGraphCommit } from './types.ts'
 
 /**
@@ -38,6 +39,8 @@ export interface GitGraphSplitProps {
   onSelectCommit: (hash: string | null) => void
   onLoadMore: () => void
   t: (key: string, fallback: string) => string
+  /** Short ref name -> object id, for resolving a branch selection to a walk root. */
+  refTips?: Readonly<Record<string, string>>
 }
 
 /**
@@ -52,8 +55,44 @@ export function GitGraphSplit({
   onSelectCommit,
   onLoadMore,
   t,
+  refTips,
 }: GitGraphSplitProps): ReactNode {
   const detailOpen = selectedCommitHash !== null && selectedCommitHash !== ''
+
+  /*
+   * The filter lives here rather than in the pane so it survives a pane
+   * remount, and rather than in the hook so switching it never refetches: the
+   * commits are already loaded and filtering is a pure transform over them.
+   */
+  const [filter, setFilter] = useState<GraphFilter>(EMPTY_FILTER)
+  const onFilterChange = useCallback((next: GraphFilter) => { setFilter(next) }, [])
+
+  /*
+   * Prune selections that no longer name anything in the loaded commits.
+   *
+   * A branch switch can replace the commit page, and a filter naming a branch
+   * that is no longer present would silently reduce the graph to nothing —
+   * indistinguishable from "this repository is empty". A selection that can no
+   * longer be resolved is therefore dropped. An EMPTY commit list is
+   * deliberately NOT read as "everything vanished": that is the loading state.
+   */
+  useEffect(() => {
+    if (commits.length === 0) return
+    const available = collectFacets(commits)
+    const keep = (selected: readonly string[], kinds: readonly FacetKind[]): string[] =>
+      selected.filter(name => available.some(f => kinds.includes(f.kind) && f.label === name))
+    setFilter((current) => {
+      const next: GraphFilter = {
+        branches: keep(current.branches, ['branch', 'remote']),
+        tags: keep(current.tags, ['tag']),
+        authors: keep(current.authors, ['author']),
+      }
+      const changed = next.branches.length !== current.branches.length
+        || next.tags.length !== current.tags.length
+        || next.authors.length !== current.authors.length
+      return changed ? next : current
+    })
+  }, [commits])
 
   const splitStyle: CSSProperties = {
     // Single-axis flex: the list pane takes the leftover width, the detail rail
@@ -100,6 +139,9 @@ export function GitGraphSplit({
           selectedCommitHash={selectedCommitHash}
           onSelectCommit={onSelectCommit}
           onLoadMore={onLoadMore}
+          filter={filter}
+          onFilterChange={onFilterChange}
+          refTips={refTips}
           labels={{
             empty: t('gitGraphEmpty', 'No commits yet'),
             loadMore: t('gitGraphLoadMore', 'Load more'),
@@ -109,6 +151,21 @@ export function GitGraphSplit({
             date: t('gitGraphColumnDate', 'Date'),
             author: t('gitGraphColumnAuthor', 'Author'),
             commit: t('gitGraphColumnCommit', 'Commit'),
+            filter: {
+              trigger: t('gitGraphFilter', 'Filter'),
+              branches: t('gitGraphFilterBranches', 'Branches'),
+              localBranches: t('gitGraphFilterLocal', 'Local branches'),
+              remoteBranches: t('gitGraphFilterRemote', 'Remote branches'),
+              tags: t('gitGraphFilterTags', 'Tags'),
+              authors: t('gitGraphFilterAuthors', 'Authors'),
+              clear: t('gitGraphFilterClear', 'Clear filter'),
+              empty: t('gitGraphFilterEmpty', 'Nothing to filter by yet'),
+              none: t('gitGraphFilterNone', 'All branches'),
+              active: (n) => t('gitGraphFilterActive', '{n} filter(s) active').replace('{n}', String(n)),
+              shown: (shown, total) => t('gitGraphFilterShown', '{shown} / {total} commits')
+                .replace('{shown}', String(shown)).replace('{total}', String(total)),
+              noMatches: t('gitGraphFilterNoMatches', 'No commits match the current filter'),
+            },
           }}
         />
       </div>

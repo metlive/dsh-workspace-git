@@ -35,6 +35,7 @@ import { GraphIcon } from './GraphIcon.tsx'
 import { NewBranchIcon } from './NewBranchIcon.tsx'
 import { SearchIcon } from './SearchIcon.tsx'
 import { GitGraphDialog } from './git-graph/GitGraphDialog.tsx'
+import { ensureSwitchGuardStyles } from './switchGuardStyles.ts'
 import type { BranchStore } from './store.ts'
 
 /** The session list snapshot face this component reads through `useSessions`. */
@@ -219,6 +220,15 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
   useEffect(() => () => {
     if (timer.current !== undefined) clearTimeout(timer.current)
   }, [])
+
+  // Widen the switch-guard dialog. Injected only while it is open — the
+  // stylesheet is nothing but a width override for that one card, so there is
+  // no reason to add it to every page carrying a branch pill. The helper is
+  // idempotent, so reopening (or a second seat rendering one) is free.
+  useEffect(() => {
+    if (guard === null) return
+    ensureSwitchGuardStyles()
+  }, [guard])
 
   // Clear the filter whenever the menu closes so the next open starts fresh.
   useEffect(() => {
@@ -1005,7 +1015,14 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
             {/* The file list is the whole point of the dialog: the user cannot
                 decide without seeing WHAT is dirty. It scrolls rather than
                 growing the modal, because a real tree can list hundreds of
-                paths (a stray node_modules would otherwise fill the screen). */}
+                paths (a stray node_modules would otherwise fill the screen).
+
+                The rows and the path spans carry no line-height of their own,
+                so this one declaration is what sets the rhythm for every line
+                in the list: 12px at 1.5 (18px). Written as a unitless ratio
+                rather than the literal 18px so the two cannot drift apart —
+                the value the browser computes is identical, but changing the
+                font size can no longer leave the leading stranded. */}
             <div
               data-workspace-git-switch-guard-list=""
               style={{
@@ -1016,7 +1033,7 @@ export function BranchSelect({ sessionId, useSessions, t, store }: BranchSelectP
                 borderRadius: '8px',
                 padding: '8px 10px',
                 fontSize: '12px',
-                lineHeight: '18px',
+                lineHeight: 1.5,
                 fontFamily: 'var(--ds-font-family-code, monospace)',
               }}
             >

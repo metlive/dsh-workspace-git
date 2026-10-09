@@ -14,7 +14,7 @@
  * variables trajectory sets, so column sizing can key off the SPLIT's width
  * (container queries) instead of guessing with viewport media queries.
  */
-import type { ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import type { GitGraphCommit } from './types.ts';
 export interface GitGraphSplitProps {
     cwd: string;
@@ -25,8 +25,10 @@ export interface GitGraphSplitProps {
     onSelectCommit: (hash: string | null) => void;
     onLoadMore: () => void;
     t: (key: string, fallback: string) => string;
+    /** Short ref name -> object id, for resolving a branch selection to a walk root. */
+    refTips?: Readonly<Record<string, string>>;
 }
 /**
  * Split layout used by both the session view and the modal dialog.
  */
-export declare function GitGraphSplit({ cwd, commits, hasMore, loadingMore, selectedCommitHash, onSelectCommit, onLoadMore, t, }: GitGraphSplitProps): ReactNode;
+export declare function GitGraphSplit({ cwd, commits, hasMore, loadingMore, selectedCommitHash, onSelectCommit, onLoadMore, t, refTips, }: GitGraphSplitProps): ReactNode;

@@ -84,6 +84,7 @@ export function GitGraphDialog({ open, cwd, onClose, t }: GitGraphDialogProps): 
             onSelectCommit={graph.setSelected}
             onLoadMore={graph.loadMore}
             t={label}
+            refTips={graph.refTips}
           />
         )}
       </div>

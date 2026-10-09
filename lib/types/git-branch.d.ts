@@ -29,9 +29,26 @@ export declare class BranchCache {
     private readonly inflight;
     private readonly refEntries;
     private readonly refInflight;
+    /**
+     * Per-path generation, bumped by {@link invalidate}.
+     *
+     * Deleting a cache entry is not enough to make an invalidation stick: a walk
+     * already in flight holds no reference to the map, so its `.then` would
+     * re-insert the PRE-checkout answer under a fresh TTL. The window is real —
+     * `resolveCheckout` invalidates right after `git switch` returns, while the
+     * sidebar's `branches` poll for the same path may be mid-walk. The stale head
+     * would then be served for the whole TTL, showing the OLD branch immediately
+     * after a successful switch.
+     *
+     * A lookup captures the generation it started under and only publishes when
+     * it is still current.
+     */
+    private readonly epoch;
     private disposed;
     /** @param ttlMs - freshness window; overridable for tests. */
     constructor(ttlMs?: number);
+    /** The current generation for one path (0 when never invalidated). */
+    private epochOf;
     /**
      * The branch list of the repository containing `path`, cached and
      * de-duplicated exactly like {@link headOf}.
@@ -64,6 +81,12 @@ export declare class BranchCache {
     /**
      * Drop the cached answers for one path (or every path), so the next lookup
      * re-reads HEAD / refs. Used after a successful checkout.
+     *
+     * Bumping the epoch is what makes this stick: it disowns any walk already in
+     * flight for the path, which would otherwise re-publish the pre-checkout
+     * answer (see the `epoch` field). `inflight` is deliberately NOT cleared —
+     * the shared promise is still a valid de-duplication handle for callers
+     * already awaiting it, and it removes itself in its own `finally`.
      * @param path - absolute path to invalidate; omit to clear the whole cache.
      */
     invalidate(path?: string): void;

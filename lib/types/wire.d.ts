@@ -5,7 +5,14 @@
  */
 import type { PluginHttpRequest, PluginHttpResponse } from './context-types.ts';
 /** Machine-readable error codes of this plugin's API. */
-export type WorkspaceGitErrorCode = 'bad-request' | 'method-error' | 'forbidden' | 'too-large' | 'internal' | 'empty-draft' | 'draft-too-large' | 'session-not-found' | 'no-model' | 'no-llm' | 'timeout' | 'truncated' | 'empty-result' | 'model-error';
+export type WorkspaceGitErrorCode = 'bad-request' | 'method-error' | 'forbidden' | 'too-large' | 'internal'
+/**
+ * A route segment that names no API method. Distinct from `bad-request` so
+ * the status is carried by the CODE rather than by an explicit argument:
+ * `statusOf` maps it to 404, and a client can tell "you called a URL that
+ * does not exist" from "your body was malformed" without guessing.
+ */
+ | 'not-found' | 'empty-draft' | 'draft-too-large' | 'session-not-found' | 'no-model' | 'no-llm' | 'timeout' | 'truncated' | 'empty-result' | 'model-error';
 /** The provider/model pair one auxiliary call runs on. */
 export interface ResolvedRoute {
     provider: string;

@@ -8,6 +8,16 @@
  */
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode, type UIEvent } from 'react'
 import { layoutGitGraph, type GitGraphCommit, type GitGraphLayoutPath } from './layout.ts'
+import { GitGraphFilterControl } from './GitGraphFilter.tsx'
+import {
+  EMPTY_FILTER,
+  collectFacets,
+  filterCommits,
+  isFilterActive,
+  toggleFacet,
+  type FacetOption,
+  type GraphFilter,
+} from './filter.ts'
 
 export interface GitGraphPaneProps {
   commits: readonly GitGraphCommit[]
@@ -16,6 +26,16 @@ export interface GitGraphPaneProps {
   selectedCommitHash: string | null
   onSelectCommit: (hash: string | null) => void
   onLoadMore?: () => void
+  /**
+   * The active facet selection. Owned by the CALLER rather than by this pane,
+   * because the same filter must survive a pane remount (the graph view
+   * re-renders when the session's branch store notifies).
+   */
+  filter?: GraphFilter
+  /** Receives the next selection when a facet is toggled. */
+  onFilterChange?: (next: GraphFilter) => void
+  /** Short ref name -> object id, used to resolve a branch selection to a walk root. */
+  refTips?: Readonly<Record<string, string>>
   labels: {
     empty: string
     loadMore: string
@@ -25,6 +45,22 @@ export interface GitGraphPaneProps {
     date: string
     author: string
     commit: string
+    /** Filter chrome; omitted entirely when the caller supplies no filter. */
+    filter?: {
+      trigger: string
+      branches: string
+      localBranches: string
+      remoteBranches: string
+      tags: string
+      authors: string
+      clear: string
+      empty: string
+      none: string
+      active: (n: number) => string
+      shown: (shown: number, total: number) => string
+      /** Shown when the filter hides every commit. */
+      noMatches: string
+    }
   }
 }
 
@@ -75,11 +111,49 @@ export function GitGraphPane({
   selectedCommitHash,
   onSelectCommit,
   onLoadMore,
+  filter,
+  onFilterChange,
+  refTips,
   labels,
 }: GitGraphPaneProps): ReactNode {
   const [hovered, setHovered] = useState<string | null>(null)
-  const layout = useMemo(() => layoutGitGraph(commits, { rowHeight: 30 }), [commits])
+
+  // The facets offered are derived from the loaded commits, so the panel can
+  // never present a choice that filters to nothing.
+  const facets = useMemo(() => collectFacets(commits), [commits])
+
+  const activeFilter = filter ?? EMPTY_FILTER
+  const filterOn = isFilterActive(activeFilter)
+
+  /*
+   * Filtering happens BEFORE layout, and that ordering is the whole design.
+   *
+   * The layout engine resolves a parent absent from its input to a sentinel
+   * vertex and BREAKS the line there, so handing it a filtered subset produces
+   * a graph that is internally consistent by construction: no path can
+   * reference a hidden commit, lanes renumber from zero, and the canvas shrinks
+   * to the lanes actually in use. Filtering AFTER layout — or merely hiding
+   * rows with CSS — would leave orphaned segments and gaps, which is exactly
+   * the "residual lines / misalignment" failure this avoids.
+   *
+   * `filterCommits` returns the SAME array when no filter is active, which
+   * keeps this memo stable for the default case.
+   */
+  const visibleCommits = useMemo(
+    () => filterCommits(commits, activeFilter, refTips),
+    [commits, activeFilter, refTips],
+  )
+
+  const layout = useMemo(() => layoutGitGraph(visibleCommits, { rowHeight: 30 }), [visibleCommits])
   const graphWidth = Math.max(layout.width + 12, GRAPH_COLUMN_MIN)
+
+  const onToggleFacet = useCallback((option: FacetOption) => {
+    onFilterChange?.(toggleFacet(activeFilter, option))
+  }, [activeFilter, onFilterChange])
+
+  const onClearFilter = useCallback(() => {
+    onFilterChange?.(EMPTY_FILTER)
+  }, [onFilterChange])
 
   const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     if (!hasMore || loadingMore || !onLoadMore) return
@@ -101,18 +175,51 @@ export function GitGraphPane({
     minWidth: 0,
   }
 
-  if (commits.length === 0) {
+  // An unfiltered empty graph means "no commits"; a filtered one means the
+  // selection matched nothing. Those are different states, and saying so is the
+  // difference between "this repo is empty" and "your filter hid everything".
+  if (visibleCommits.length === 0) {
     return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '240px',
-        color: 'var(--dsw-alias-label-tertiary)',
-        fontSize: '14px',
-      }}
+      <div
+        data-workspace-git-graph-pane=""
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          flex: 1,
+          overflow: 'hidden',
+          width: '100%',
+        }}
       >
-        {labels.empty}
+        {filterOn && labels.filter !== undefined ? (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 8px' }}>
+            <GitGraphFilterControl
+              facets={facets}
+              filter={activeFilter}
+              onToggle={onToggleFacet}
+              onClear={onClearFilter}
+              shownCount={0}
+              totalCount={commits.length}
+              labels={labels.filter}
+            />
+          </div>
+        ) : null}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flex: '1 1 0%',
+          minHeight: '240px',
+          color: 'var(--dsw-alias-label-tertiary)',
+          fontSize: '14px',
+          padding: '16px',
+          textAlign: 'center',
+        }}
+        >
+          {filterOn && labels.filter !== undefined && commits.length > 0
+            ? labels.filter.noMatches
+            : labels.empty}
+        </div>
       </div>
     )
   }
@@ -164,7 +271,22 @@ export function GitGraphPane({
           <div style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.description}</div>
           <div data-git-graph-meta="" style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.date}</div>
           <div data-git-graph-meta="" style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.author}</div>
-          <div style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.commit}</div>
+          {/* The filter sits over the commit-hash column: it is graph chrome, and
+              the hash column is the one cell that stays readable at every width
+              (the table drops date/author under 720px). */}
+          <div style={{ padding: '0 6px', overflow: 'visible', display: 'flex', justifyContent: 'flex-end' }}>
+            {labels.filter !== undefined && onFilterChange !== undefined ? (
+              <GitGraphFilterControl
+                facets={facets}
+                filter={activeFilter}
+                onToggle={onToggleFacet}
+                onClear={onClearFilter}
+                shownCount={visibleCommits.length}
+                totalCount={commits.length}
+                labels={labels.filter}
+              />
+            ) : labels.commit}
+          </div>
         </div>
       </div>
 

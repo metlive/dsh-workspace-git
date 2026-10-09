@@ -12,6 +12,14 @@
  * this parser does not understand yields `undefined`, i.e. "no branch shown" —
  * never a wrong branch and never an error surface.
  */
+/**
+ * A raw object id: 40 hex (SHA-1) or 64 hex (SHA-256 repositories).
+ *
+ * Exported because more than one module must validate a commit id, and two
+ * copies of this literal can drift apart silently — a divergence would show up
+ * as one code path accepting an id another rejects, not as a compile error.
+ */
+export declare const OBJECT_ID: RegExp;
 /** How many hex characters of a detached HEAD to show. */
 export declare const SHORT_ID_LENGTH = 7;
 /**
@@ -59,16 +67,6 @@ export declare function parseHead(headText: string): GitHead | undefined;
  * @returns the git directory it points at, or undefined.
  */
 export declare function parseGitDirPointer(pointerText: string): string | undefined;
-/**
- * Pick the branch to display when several repositories are in play.
- *
- * Only the first is ever used today (one workspace = one repository), but the
- * rule is stated once here so callers cannot drift: a real branch beats a
- * detached id, because the branch name carries more information.
- * @param heads - candidate heads in discovery order.
- * @returns the head to show, or undefined when there are none.
- */
-export declare function preferBranch(heads: readonly (GitHead | undefined)[]): GitHead | undefined;
 /** Whether a listed ref is a local branch or a remote-tracking branch. */
 export type GitRefKind = 'local' | 'remote';
 /**
@@ -95,18 +93,15 @@ export interface GitRefEntry {
     readonly current: boolean;
 }
 /**
- * Whether a remote-tracking name is the remote's symbolic HEAD (`origin/HEAD`),
- * which is not useful in a branch picker.
- * @param name - the name under `refs/remotes/` (e.g. `origin/HEAD`).
- */
-export declare function isRemoteHeadRef(name: string): boolean;
-/**
  * Extract local and remote-tracking branch names from a `packed-refs` file.
  *
  * `packed-refs` is git's compaction of `refs/` into one file: a header line
  * (`# pack-refs with: …`), optional `^<sha>` peeled-tag lines that belong to the
- * line above them, and `<sha> <refname>` rows. Tags are ignored; remote
- * symbolic HEAD refs (names ending in `/HEAD`) are skipped.
+ * line above them, and `<sha> <refname>` rows. Tags are ignored.
+ *
+ * Symbolic remote HEAD refs are NOT handled here, because they cannot occur:
+ * packing requires a ref with a literal SHA, and `origin/HEAD` is symbolic. See
+ * the comment at the `refs/remotes/` branch below.
  *
  * A loose ref file always overrides its packed entry, so the caller merges the
  * two — but for LISTING purposes a duplicate name is harmless and de-duplication

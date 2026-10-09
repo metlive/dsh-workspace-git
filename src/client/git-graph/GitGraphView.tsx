@@ -40,7 +40,19 @@ export function GitGraphView({ sessionId, useSessions, t, store }: GitGraphViewP
   const answer = cwd === undefined || cwd === '' ? undefined : store?.branchOf(cwd)
   const hasHead = answer !== undefined && answer.branch !== null
   const graphEnabled = hasHead && cwd !== undefined && cwd !== ''
-  const graph = useCommitGraph(cwd ?? '', graphEnabled)
+  /*
+   * The checked-out branch name is part of the graph's identity, not just its
+   * precondition.
+   *
+   * The route runs `git log HEAD --branches --tags --remotes`, so switching
+   * branch does NOT change which commits come back — but it DOES change the
+   * decorations: `HEAD -> main` moves to whatever is now checked out. Without
+   * this key the view kept the previous page and the HEAD chip stayed on the
+   * old commit, which reads as "nothing happened" even though the checkout
+   * succeeded.
+   */
+  const headBranch = answer !== undefined && answer.branch !== null ? answer.branch : ''
+  const graph = useCommitGraph(cwd ?? '', graphEnabled, headBranch)
 
   const label = (key: string, fallback: string): string => t?.(key) ?? fallback
 
@@ -147,6 +159,7 @@ export function GitGraphView({ sessionId, useSessions, t, store }: GitGraphViewP
           onSelectCommit={graph.setSelected}
           onLoadMore={graph.loadMore}
           t={label}
+          refTips={graph.refTips}
         />
       )}
     </div>
