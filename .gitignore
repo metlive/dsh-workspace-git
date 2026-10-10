@@ -6,3 +6,4 @@ lib/*.map
 .superpowers/
 .workbuddy/
 docs/
+test/
