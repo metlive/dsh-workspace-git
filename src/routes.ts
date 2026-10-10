@@ -176,9 +176,9 @@ export async function resolveGraph(payload: unknown): Promise<GitGraphSnapshot> 
  * @param payload - the parsed request body.
  * @returns short ref name -> object id.
  */
-export async function resolveTips(payload: unknown): Promise<{ tips: Record<string, string> }> {
+export async function resolveTips(payload: unknown): Promise<{ tips: Record<string, string>; branches: Record<string, string> }> {
   const path = parseRefsRequest(payload)
-  return { tips: await fetchRefTips(path) }
+  return await fetchRefTips(path)
 }
 
 /**

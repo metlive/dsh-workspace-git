@@ -23,6 +23,11 @@ export interface UseCommitGraphResult {
    * falls back to ref decorations, which cover the tips that ARE loaded.
    */
   refTips: Record<string, string>
+  /**
+   * Short ref name -> object id for local and remote-tracking branches only.
+   * Populates the branch filter dropdown without listing tags.
+   */
+  branchTips: Record<string, string>
   selected: string | null
   setSelected: (hash: string | null) => void
   loadMore: () => void
@@ -42,6 +47,7 @@ export function useCommitGraph(cwd: string, enabled: boolean, branchKey = ''): U
   const [commits, setCommits] = useState<GitGraphCommit[]>([])
   const [hasMore, setHasMore] = useState(false)
   const [refTips, setRefTips] = useState<Record<string, string>>({})
+  const [branchTips, setBranchTips] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<string | null>(null)
   const loadingMoreRef = useRef(false)
   const generationRef = useRef(0)
@@ -72,6 +78,7 @@ export function useCommitGraph(cwd: string, enabled: boolean, branchKey = ''): U
       setCommits([])
       setHasMore(false)
       setRefTips({})
+      setBranchTips({})
       setSelected(null)
     }
   }
@@ -85,19 +92,21 @@ export function useCommitGraph(cwd: string, enabled: boolean, branchKey = ''): U
     setCommits([])
     setHasMore(false)
     setRefTips({})
+    setBranchTips({})
     setSelected(null)
     try {
       // The tips map is fetched alongside the first page and is NOT fatal: a
       // failure leaves it empty and the filter falls back to decorations, which
       // is strictly better than blocking the graph on a secondary request.
-      const [result, tips] = await Promise.all([
+      const [result, tipMaps] = await Promise.all([
         fetchCommitGraph(cwd, PAGE_SIZE, 0),
-        fetchRefTips(cwd).catch(() => ({}) as Record<string, string>),
+        fetchRefTips(cwd).catch(() => ({ tips: {}, branches: {} })),
       ])
       if (generation !== generationRef.current) return
       setCommits(result.commits)
       setHasMore(result.hasMore)
-      setRefTips(tips)
+      setRefTips(tipMaps.tips)
+      setBranchTips(tipMaps.branches)
       // Keep selection null until the user clicks a row (detail panel stays closed).
       setSelected(null)
     } catch (err) {
@@ -148,6 +157,7 @@ export function useCommitGraph(cwd: string, enabled: boolean, branchKey = ''): U
     commits,
     hasMore,
     refTips,
+    branchTips,
     selected,
     setSelected,
     loadMore: () => { void loadMore() },

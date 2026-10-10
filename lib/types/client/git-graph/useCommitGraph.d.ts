@@ -15,6 +15,11 @@ export interface UseCommitGraphResult {
      * falls back to ref decorations, which cover the tips that ARE loaded.
      */
     refTips: Record<string, string>;
+    /**
+     * Short ref name -> object id for local and remote-tracking branches only.
+     * Populates the branch filter dropdown without listing tags.
+     */
+    branchTips: Record<string, string>;
     selected: string | null;
     setSelected: (hash: string | null) => void;
     loadMore: () => void;

@@ -84,7 +84,8 @@ git('tag', 'v1/HEAD')
 git('update-ref', 'refs/remotes/origin/plain', 'HEAD')
 git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/heads/plain')
 
-const tips = await fetchRefTips(repoDir)
+const tipMaps = await fetchRefTips(repoDir)
+const tips = tipMaps.tips
 const keys = Object.keys(tips)
 
 check('ordinary branch named foo/HEAD is listed', keys.includes('foo/HEAD'))
@@ -93,6 +94,8 @@ check('ordinary tag named v1/HEAD is listed', keys.includes('v1/HEAD'))
 check('ordinary branch plain is listed', keys.includes('plain'))
 check('symbolic origin/HEAD is skipped', !keys.includes('origin/HEAD'))
 check('the remote-tracking branch itself is listed', keys.includes('origin/plain'))
+check('branch tips exclude tags', !Object.keys(tipMaps.branches).includes('v1/HEAD'))
+check('branch tips include local branches', Object.keys(tipMaps.branches).includes('foo/HEAD'))
 
 // The tips map is what resolves a selected branch to a walk root, so a missing
 // key means the filter silently returns an empty graph for that branch.

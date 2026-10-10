@@ -27,8 +27,10 @@ export interface GitGraphSplitProps {
     t: (key: string, fallback: string) => string;
     /** Short ref name -> object id, for resolving a branch selection to a walk root. */
     refTips?: Readonly<Record<string, string>>;
+    /** Heads + remotes only; populates the branch filter dropdown. */
+    branchTips?: Readonly<Record<string, string>>;
 }
 /**
  * Split layout used by both the session view and the modal dialog.
  */
-export declare function GitGraphSplit({ cwd, commits, hasMore, loadingMore, selectedCommitHash, onSelectCommit, onLoadMore, t, refTips, }: GitGraphSplitProps): ReactNode;
+export declare function GitGraphSplit({ cwd, commits, hasMore, loadingMore, selectedCommitHash, onSelectCommit, onLoadMore, t, refTips, branchTips, }: GitGraphSplitProps): ReactNode;

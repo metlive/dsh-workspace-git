@@ -48,10 +48,15 @@ export async function fetchCommitGraph(
  * @param signal - optional abort.
  * @returns short ref name -> object id (empty for a non-repository).
  */
+export interface RefTipsResult {
+  tips: Record<string, string>
+  branches: Record<string, string>
+}
+
 export async function fetchRefTips(
   path: string,
   signal?: AbortSignal,
-): Promise<Record<string, string>> {
+): Promise<RefTipsResult> {
   let response: Response
   try {
     response = await fetch('/workspace-git/api/tips', {
@@ -63,15 +68,21 @@ export async function fetchRefTips(
   } catch (error) {
     throw new WorkspaceGitApiError('network', error instanceof Error ? error.message : String(error))
   }
-  const parsed: { ok?: boolean; value?: { tips?: Record<string, string> }; error?: { code?: string; message?: string } } | null
-    = await response.json().catch(() => null)
+  const parsed: {
+    ok?: boolean
+    value?: { tips?: Record<string, string>; branches?: Record<string, string> }
+    error?: { code?: string; message?: string }
+  } | null = await response.json().catch(() => null)
   if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
     throw new WorkspaceGitApiError(
       parsed?.error?.code ?? 'http',
       parsed?.error?.message ?? `HTTP ${response.status}`,
     )
   }
-  return parsed.value.tips ?? {}
+  return {
+    tips: parsed.value.tips ?? {},
+    branches: parsed.value.branches ?? {},
+  }
 }
 
 /**

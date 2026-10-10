@@ -74,13 +74,18 @@ export function isFilterActive(filter: GraphFilter): boolean {
 /**
  * Collect the selectable values present in one page of commits.
  *
- * Counts are per-page by design: the panel offers what the user can actually
- * see, and a branch whose commits all sit on a later page would otherwise
- * appear as a choice that filters to nothing.
+ * Author counts are per-page by design: the dropdown offers authors the user
+ * can actually see. Branches additionally merge in every short name from the
+ * host `tips` map so the branch dropdown lists the whole repository, not only
+ * the tips that happen to be decorated on the current page.
  * @param commits - the loaded commits.
+ * @param tips - short ref name → object id, from the host `tips` method.
  * @returns branch (local then remote), tag, and author options.
  */
-export function collectFacets(commits: readonly GitGraphCommit[]): FacetOption[] {
+export function collectFacets(
+  commits: readonly GitGraphCommit[],
+  tips: Readonly<Record<string, string>> = {},
+): FacetOption[] {
   const counts = new Map<string, FacetOption>()
 
   const bump = (kind: FacetKind, name: string): void => {
@@ -100,6 +105,17 @@ export function collectFacets(commits: readonly GitGraphCommit[]): FacetOption[]
       else if (ref.kind === 'tag') bump('tag', ref.name)
     }
     if (commit.authorName !== null && commit.authorName !== '') bump('author', commit.authorName)
+  }
+
+  // Offer every branch the host knows about, even when its tip is not on this
+  // page. Classification without `%(refname)`: a name already seen as a local
+  // branch stays local; otherwise a slash means remote-tracking (`origin/x`).
+  // Local branches with slashes (`feature/x`) are still classified correctly
+  // when they appear as decorations above.
+  for (const name of Object.keys(tips)) {
+    if (counts.has(`branch:${name}`) || counts.has(`remote:${name}`)) continue
+    const kind: FacetKind = name.includes('/') ? 'remote' : 'branch'
+    counts.set(`${kind}:${name}`, { id: `${kind}:${name}`, label: name, kind, count: 0 })
   }
 
   // Stable, readable order: branches before remotes before tags before authors,
@@ -287,6 +303,31 @@ export function isFacetSelected(filter: GraphFilter, option: FacetOption): boole
 /** Total number of selected values across every dimension. */
 export function selectedCount(filter: GraphFilter): number {
   return filter.branches.length + filter.tags.length + filter.authors.length
+}
+
+/**
+ * Set the branch dimension to a single name (or clear it).
+ *
+ * The toolbar exposes a single-select dropdown, so the selection is always
+ * zero or one branch. Tags and authors are left untouched.
+ * @param filter - the current selection.
+ * @param branch - the short ref name, or `null` / `''` for "all branches".
+ * @returns the updated selection.
+ */
+export function setFilterBranch(filter: GraphFilter, branch: string | null): GraphFilter {
+  const name = branch === null || branch === '' ? null : branch
+  return { ...filter, branches: name === null ? [] : [name] }
+}
+
+/**
+ * Set the author dimension to a single name (or clear it).
+ * @param filter - the current selection.
+ * @param author - the author name, or `null` / `''` for "all authors".
+ * @returns the updated selection.
+ */
+export function setFilterAuthor(filter: GraphFilter, author: string | null): GraphFilter {
+  const name = author === null || author === '' ? null : author
+  return { ...filter, authors: name === null ? [] : [name] }
 }
 
 /** Re-exported so callers need not reach into the wire types for the kind. */

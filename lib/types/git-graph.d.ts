@@ -35,6 +35,13 @@ export declare function findWorkTree(startPath: string): Promise<string | undefi
  * @returns the commits in topo/date order.
  */
 export declare function parseGitGraphRecords(stdout: string): GitGraphCommit[];
+/** Tip maps for graph filtering: all refs for resolution, branches for the dropdown. */
+export interface RefTipsSnapshot {
+    /** Short ref name → object id for heads, remotes, and tags. */
+    tips: Record<string, string>;
+    /** Short ref name → object id for local and remote-tracking branches only. */
+    branches: Record<string, string>;
+}
 /**
  * Resolve every branch and tag tip to its object id, for one repository.
  *
@@ -45,15 +52,17 @@ export declare function parseGitGraphRecords(stdout: string): GitGraphCommit[];
  * empty graph. This map lets the client resolve a selected branch name to its
  * tip hash regardless of which page is loaded.
  *
- * Local branches, remote-tracking branches, and tags are all included. The keys
- * are the short names the UI shows (`main`, `origin/main`, `v1`), which is the
- * same spelling `--decorate` produces, so the two agree.
+ * Local branches, remote-tracking branches, and tags are all included in
+ * `tips`. `branches` is the heads+remotes subset used to populate the graph's
+ * branch dropdown without listing tags. The keys are the short names the UI
+ * shows (`main`, `origin/main`, `v1`), which is the same spelling `--decorate`
+ * produces, so the two agree.
  *
- * A repository with no refs yields an empty map rather than an error.
+ * A repository with no refs yields empty maps rather than an error.
  * @param path - absolute workspace path.
- * @returns short ref name -> object id.
+ * @returns tip maps keyed by short ref name.
  */
-export declare function fetchRefTips(path: string): Promise<Record<string, string>>;
+export declare function fetchRefTips(path: string): Promise<RefTipsSnapshot>;
 /**
  * Fetch one page of the commit graph for the repository containing `path`.
  * @param path - absolute workspace path.

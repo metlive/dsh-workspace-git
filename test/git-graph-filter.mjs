@@ -25,6 +25,8 @@ import {
   branchTipHashes,
   reachableFrom,
   selectedCount,
+  setFilterAuthor,
+  setFilterBranch,
   toggleFacet,
 } from '../src/client/git-graph/filter.ts'
 import { layoutGitGraph } from '../src/client/git-graph/layout.ts'
@@ -96,6 +98,16 @@ check('facets are ordered branch → remote → tag → author, alphabetical', (
   assert.deepEqual(kinds, sorted)
   const branches = collectFacets(COMMITS).filter(f => f.kind === 'branch').map(f => f.label)
   assert.deepEqual(branches, ['feature', 'main', 'release'])
+})
+
+check('collectFacets merges host tips that are not yet decorated', () => {
+  // A branch whose tip sits outside the loaded page still belongs in the
+  // dropdown — the tips map is what makes it selectable at all.
+  const page = [c('A', [], [])]
+  const facets = collectFacets(page, { main: 'M3', 'origin/main': 'M2', hotfix: 'H1' })
+  assert.ok(facets.some(f => f.id === 'branch:main'))
+  assert.ok(facets.some(f => f.id === 'branch:hotfix'))
+  assert.ok(facets.some(f => f.id === 'remote:origin/main'))
 })
 
 check('facet counts reflect how many commits carry the value', () => {
@@ -314,6 +326,24 @@ check('toggleFacet never mutates the input', () => {
   const snapshot = JSON.stringify(before)
   toggleFacet(before, { id: 'branch:x', label: 'x', kind: 'branch', count: 1 })
   assert.equal(JSON.stringify(before), snapshot)
+})
+
+check('setFilterBranch replaces the branch dimension as a single select', () => {
+  const on = setFilterBranch({ ...EMPTY_FILTER, branches: ['feature', 'main'], authors: ['Ada'] }, 'release')
+  assert.deepEqual(on.branches, ['release'])
+  assert.deepEqual(on.authors, ['Ada'], 'authors must be left alone')
+  const off = setFilterBranch(on, '')
+  assert.deepEqual(off.branches, [])
+  assert.deepEqual(off.authors, ['Ada'])
+})
+
+check('setFilterAuthor replaces the author dimension as a single select', () => {
+  const on = setFilterAuthor({ ...EMPTY_FILTER, authors: ['Ada', 'Bo'], branches: ['main'] }, 'Cy')
+  assert.deepEqual(on.authors, ['Cy'])
+  assert.deepEqual(on.branches, ['main'], 'branches must be left alone')
+  const off = setFilterAuthor(on, null)
+  assert.deepEqual(off.authors, [])
+  assert.deepEqual(off.branches, ['main'])
 })
 
 // --- tip resolution across pages -----------------------------------------

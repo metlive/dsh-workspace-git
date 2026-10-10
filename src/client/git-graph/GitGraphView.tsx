@@ -160,6 +160,7 @@ export function GitGraphView({ sessionId, useSessions, t, store }: GitGraphViewP
           onLoadMore={graph.loadMore}
           t={label}
           refTips={graph.refTips}
+          branchTips={graph.branchTips}
         />
       )}
     </div>

@@ -73,6 +73,23 @@ body:has([data-workspace-git-graph-view]) [data-width-handle="right"] {
     max-width: 62% !important;
   }
 }
+[data-workspace-git-graph-view] [data-git-graph-toolbar] {
+  flex: none !important;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: visible;
+}
+/* Keep the same border after a choice; focus must not erase it. */
+[data-workspace-git-graph-view] [data-git-graph-filter-select],
+[data-workspace-git-graph-view] [data-git-graph-filter-select]:hover,
+[data-workspace-git-graph-view] [data-git-graph-filter-select]:focus,
+[data-workspace-git-graph-view] [data-git-graph-filter-select]:focus-visible,
+[data-workspace-git-graph-view] [data-git-graph-filter-select]:active {
+  border: 1px solid var(--dsw-alias-border-l2) !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background-color: #fff !important;
+}
 [data-workspace-git-graph-view] [data-git-graph-header] {
   flex: none !important;
   height: var(--dsh-git-graph-toolbar-height) !important;

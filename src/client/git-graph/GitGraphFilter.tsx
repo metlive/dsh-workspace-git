@@ -1,270 +1,237 @@
 /**
- * Branch/tag/author filter control for the commit graph.
+ * Branch + author filter toolbar for the commit graph.
  *
- * A single trigger button ("筛选") in the graph's header row, opening a popover
- * of grouped checkboxes with an active-count badge and a clear action. It is a
- * plain button + absolutely-positioned popover rather than the `Menu` primitive,
- * for one reason: `Menu` treats a click as a selection and closes, but a facet
- * panel must stay open while several boxes are ticked. The dismissal contract
- * (outside click, Escape) is the same one `Menu` implements, so nothing about
- * the interaction is novel.
+ * Two native `<select>` dropdowns sit in a compact toolbar above the commit
+ * table: one for branch (local then remote), one for author ("操作者"). Native
+ * selects keep the keyboard and screen-reader contract without depending on a
+ * Menu primitive that closes on every click — which is the wrong interaction
+ * for a facet panel, and also wrong for a single-select that should stay put
+ * after a choice.
  *
  * The component is presentational: it renders whatever facets it is handed and
- * reports toggles upward. All filtering logic lives in `filter.ts`.
+ * reports dimension changes upward. All filtering logic lives in `filter.ts`.
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useMemo, type CSSProperties, type ReactNode } from 'react'
 import {
-  isFacetSelected,
   selectedCount,
-  type FacetKind,
   type FacetOption,
   type GraphFilter,
 } from './filter.ts'
-
-/*
- * Why a native checkbox rather than the primitives' `Checkbox`.
- *
- * `Checkbox` IS exported by the primitives package's host build, but it is NOT
- * present in the browser module table this deployment serves: importing it made
- * the whole `conversation.view` slot throw React error #130 ("element type is
- * invalid") the moment the panel opened, taking the graph down with it. No
- * shipped plugin uses it, which is consistent with it not being part of the
- * table's public face.
- *
- * A native `<input type="checkbox">` has no such coupling, keeps the keyboard
- * and screen-reader semantics the primitive would have provided, and the
- * styling below uses the same `--dsw-*` tokens as the rest of the plugin.
- */
 
 export interface GitGraphFilterProps {
   /** The selectable values present in the loaded commits. */
   facets: readonly FacetOption[]
   /** The active selection. */
   filter: GraphFilter
-  /** Toggle one facet value. */
-  onToggle: (option: FacetOption) => void
+  /** Replace the branch dimension (empty string clears). */
+  onBranchChange: (branch: string) => void
+  /** Replace the author dimension (empty string clears). */
+  onAuthorChange: (author: string) => void
   /** Clear every dimension. */
   onClear: () => void
   /** How many commits the filter currently shows, and how many are loaded. */
   shownCount: number
   totalCount: number
   labels: {
-    trigger: string
     branches: string
     localBranches: string
     remoteBranches: string
-    tags: string
     authors: string
     clear: string
     empty: string
     none: string
-    active: (n: number) => string
+    allAuthors: string
     shown: (shown: number, total: number) => string
   }
 }
 
-/** Group order and heading for each facet kind. */
-function groupsOf(labels: GitGraphFilterProps['labels']): Array<{ kinds: FacetKind[]; title: string }> {
-  return [
-    { kinds: ['branch'], title: labels.localBranches },
-    { kinds: ['remote'], title: labels.remoteBranches },
-    { kinds: ['tag'], title: labels.tags },
-    { kinds: ['author'], title: labels.authors },
-  ]
-}
-
-const triggerStyle = (active: boolean): CSSProperties => ({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '6px',
-  height: '22px',
-  padding: '0 8px',
-  borderRadius: '4px',
-  border: `1px solid ${active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
-  background: active ? 'var(--dsw-alias-interactive-bg-active)' : 'transparent',
-  color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
-  font: 'inherit',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-})
-
-const badgeStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  minWidth: '16px',
-  height: '16px',
-  padding: '0 4px',
-  borderRadius: '8px',
-  background: 'var(--dsw-alias-brand-primary)',
-  color: '#fff',
-  fontSize: '10px',
-  lineHeight: '16px',
-}
-
-const panelStyle: CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 4px)',
-  right: 0,
-  zIndex: 40,
-  minWidth: '220px',
-  maxWidth: '320px',
-  maxHeight: '360px',
-  overflowY: 'auto',
-  padding: '8px',
-  borderRadius: '8px',
-  border: '1px solid var(--dsw-alias-border-l2)',
-  background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)))',
-  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.18)',
-}
-
-const groupTitleStyle: CSSProperties = {
-  padding: '6px 6px 4px',
-  fontSize: '11px',
-  color: 'var(--dsw-alias-label-tertiary)',
-}
-
-const rowStyle: CSSProperties = {
+const toolbarStyle: CSSProperties = {
   display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  gap: '8px',
+  flex: 'none',
+  boxSizing: 'border-box',
+  padding: '6px 8px',
+  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  background: 'var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-layer-2))',
+  minWidth: 0,
+}
+
+const fieldStyle: CSSProperties = {
+  display: 'inline-flex',
   alignItems: 'center',
   gap: '6px',
-  padding: '2px 6px',
+  minWidth: 0,
+  flex: '0 1 auto',
+}
+
+const labelStyle: CSSProperties = {
+  flex: 'none',
   fontSize: '12px',
+  color: 'var(--dsw-alias-label-tertiary)',
+  whiteSpace: 'nowrap',
+}
+
+const selectStyle: CSSProperties = {
+  maxWidth: '180px',
+  minWidth: '96px',
+  height: '24px',
+  boxSizing: 'border-box',
+  padding: '0 22px 0 6px',
+  borderRadius: '4px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  // appearance:none keeps the border under focus; native macOS selects often
+  // drop it after a choice while the control still holds focus.
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  MozAppearance: 'none',
+  backgroundColor: '#fff',
+  backgroundImage:
+    'linear-gradient(45deg, transparent 50%, var(--dsw-alias-label-tertiary) 50%),'
+    + 'linear-gradient(135deg, var(--dsw-alias-label-tertiary) 50%, transparent 50%)',
+  backgroundPosition: 'calc(100% - 12px) 10px, calc(100% - 8px) 10px',
+  backgroundSize: '4px 4px, 4px 4px',
+  backgroundRepeat: 'no-repeat',
   color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: '12px',
+  cursor: 'pointer',
+  outline: 'none',
+  boxShadow: 'none',
 }
 
 const countStyle: CSSProperties = {
   marginLeft: 'auto',
   fontSize: '11px',
   color: 'var(--dsw-alias-label-tertiary)',
+  whiteSpace: 'nowrap',
 }
 
 /**
- * Render the filter control.
+ * Render the branch / author filter toolbar.
  * @param props - facets, the active filter, and their handlers.
- * @returns the trigger and its popover.
+ * @returns the toolbar with two dropdowns.
  */
 export function GitGraphFilterControl({
   facets,
   filter,
-  onToggle,
+  onBranchChange,
+  onAuthorChange,
   onClear,
   shownCount,
   totalCount,
   labels,
 }: GitGraphFilterProps): ReactNode {
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement | null>(null)
+  const { localBranches, remoteBranches, authors } = useMemo(() => ({
+    localBranches: facets.filter(facet => facet.kind === 'branch'),
+    remoteBranches: facets.filter(facet => facet.kind === 'remote'),
+    authors: facets.filter(facet => facet.kind === 'author'),
+  }), [facets])
 
-  const active = selectedCount(filter)
+  const hasBranchOptions = localBranches.length > 0 || remoteBranches.length > 0
+  const hasAuthorOptions = authors.length > 0
+  const hasAnyFacet = hasBranchOptions || hasAuthorOptions
+  const active = selectedCount(filter) > 0
 
-  // Dismissal: a pointer outside the control, or Escape. Listeners are only
-  // attached while open, so a closed control costs nothing.
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: PointerEvent): void => {
-      const root = rootRef.current
-      if (root !== null && event.target instanceof Node && !root.contains(event.target)) setOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        setOpen(false)
-      }
-    }
-    window.addEventListener('pointerdown', onPointerDown, true)
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown, true)
-      window.removeEventListener('keydown', onKeyDown, true)
-    }
-  }, [open])
-
-  // `active` is read through a ref-free callback so the trigger's own click does
-  // not also trip the outside-click listener that just opened the panel.
-  const toggleOpen = useCallback(() => { setOpen(value => !value) }, [])
-
-  const groups = groupsOf(labels)
-  const hasAnyFacet = facets.length > 0
+  // Dropdowns are single-select; when a legacy multi-selection is somehow
+  // present, show the first value so the control never lies about being empty.
+  const branchValue = filter.branches[0] ?? ''
+  const authorValue = filter.authors[0] ?? ''
 
   return (
-    <div ref={rootRef} data-git-graph-filter="" style={{ position: 'relative', flex: 'none' }}>
-      <button
-        type="button"
-        data-git-graph-filter-trigger=""
-        data-filter-active={active > 0 ? 'true' : 'false'}
-        aria-expanded={open}
-        aria-haspopup="true"
-        title={active > 0 ? labels.active(active) : labels.trigger}
-        style={triggerStyle(active > 0)}
-        onClick={toggleOpen}
-      >
-        {labels.trigger}
-        {active > 0 ? <span style={badgeStyle}>{active}</span> : null}
-      </button>
-
-      {open ? (
-        <div data-git-graph-filter-panel="" role="dialog" aria-label={labels.trigger} style={panelStyle}>
-          {!hasAnyFacet ? (
-            <div style={{ padding: '8px 6px', fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' }}>
-              {labels.empty}
-            </div>
-          ) : (
-            <>
-              <div style={{ ...rowStyle, color: 'var(--dsw-alias-label-tertiary)', paddingBottom: '6px' }}>
-                {labels.shown(shownCount, totalCount)}
-              </div>
-              {groups.map((group) => {
-                const options = facets.filter(facet => group.kinds.includes(facet.kind))
-                if (options.length === 0) return null
-                return (
-                  <div key={group.title} data-git-graph-filter-group={group.title}>
-                    <div style={groupTitleStyle}>{group.title}</div>
-                    {options.map(option => (
-                      <label
-                        key={option.id}
-                        data-git-graph-filter-option={option.id}
-                        style={{ ...rowStyle, cursor: 'pointer', borderRadius: '4px' }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isFacetSelected(filter, option)}
-                          onChange={() => { onToggle(option) }}
-                          style={{ margin: 0, flex: 'none', accentColor: 'var(--dsw-alias-brand-primary)' }}
-                        />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {option.label}
-                        </span>
-                        <span style={countStyle}>{option.count}</span>
-                      </label>
+    <div data-git-graph-filter="" data-git-graph-toolbar="" style={toolbarStyle}>
+      {!hasAnyFacet ? (
+        <span style={{ fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' }}>
+          {labels.empty}
+        </span>
+      ) : (
+        <>
+          {hasBranchOptions ? (
+            <label data-git-graph-filter-branch="" style={fieldStyle}>
+              <span style={labelStyle}>{labels.branches}</span>
+              <select
+                data-git-graph-filter-select=""
+                aria-label={labels.branches}
+                value={branchValue}
+                onChange={(event) => {
+                  onBranchChange(event.target.value)
+                  event.currentTarget.blur()
+                }}
+                style={selectStyle}
+              >
+                <option value="">{labels.none}</option>
+                {localBranches.length > 0 ? (
+                  <optgroup label={labels.localBranches}>
+                    {localBranches.map(option => (
+                      <option key={option.id} value={option.label}>
+                        {option.label}
+                      </option>
                     ))}
-                  </div>
-                )
-              })}
-              <div style={{ borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: '6px', paddingTop: '6px' }}>
-                <button
-                  type="button"
-                  data-git-graph-filter-clear=""
-                  disabled={active === 0}
-                  onClick={onClear}
-                  style={{
-                    width: '100%',
-                    height: '24px',
-                    borderRadius: '4px',
-                    border: '1px solid var(--dsw-alias-border-l2)',
-                    background: 'transparent',
-                    color: active === 0 ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)',
-                    font: 'inherit',
-                    cursor: active === 0 ? 'default' : 'pointer',
-                  }}
-                >
-                  {labels.clear}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      ) : null}
+                  </optgroup>
+                ) : null}
+                {remoteBranches.length > 0 ? (
+                  <optgroup label={labels.remoteBranches}>
+                    {remoteBranches.map(option => (
+                      <option key={option.id} value={option.label}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </select>
+            </label>
+          ) : null}
+
+          {hasAuthorOptions ? (
+            <label data-git-graph-filter-author="" style={fieldStyle}>
+              <span style={labelStyle}>{labels.authors}</span>
+              <select
+                data-git-graph-filter-select=""
+                aria-label={labels.authors}
+                value={authorValue}
+                onChange={(event) => {
+                  onAuthorChange(event.target.value)
+                  event.currentTarget.blur()
+                }}
+                style={selectStyle}
+              >
+                <option value="">{labels.allAuthors}</option>
+                {authors.map(option => (
+                  <option key={option.id} value={option.label}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          <span style={countStyle}>{labels.shown(shownCount, totalCount)}</span>
+
+          {active ? (
+            <button
+              type="button"
+              data-git-graph-filter-clear=""
+              onClick={onClear}
+              style={{
+                flex: 'none',
+                height: '24px',
+                padding: '0 8px',
+                borderRadius: '4px',
+                border: '1px solid var(--dsw-alias-border-l2)',
+                background: 'transparent',
+                color: 'var(--dsw-alias-label-primary)',
+                font: 'inherit',
+                fontSize: '12px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {labels.clear}
+            </button>
+          ) : null}
+        </>
+      )}
     </div>
   )
 }

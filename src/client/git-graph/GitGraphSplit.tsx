@@ -41,6 +41,8 @@ export interface GitGraphSplitProps {
   t: (key: string, fallback: string) => string
   /** Short ref name -> object id, for resolving a branch selection to a walk root. */
   refTips?: Readonly<Record<string, string>>
+  /** Heads + remotes only; populates the branch filter dropdown. */
+  branchTips?: Readonly<Record<string, string>>
 }
 
 /**
@@ -56,6 +58,7 @@ export function GitGraphSplit({
   onLoadMore,
   t,
   refTips,
+  branchTips,
 }: GitGraphSplitProps): ReactNode {
   const detailOpen = selectedCommitHash !== null && selectedCommitHash !== ''
 
@@ -78,12 +81,20 @@ export function GitGraphSplit({
    */
   useEffect(() => {
     if (commits.length === 0) return
-    const available = collectFacets(commits)
+    const available = collectFacets(commits, branchTips)
     const keep = (selected: readonly string[], kinds: readonly FacetKind[]): string[] =>
       selected.filter(name => available.some(f => kinds.includes(f.kind) && f.label === name))
+    // Branches may also be resolved via the host tips map even when the tip
+    // decoration is not yet on the loaded page; keep those selections.
+    const keepBranches = (selected: readonly string[]): string[] =>
+      selected.filter(name =>
+        available.some(f => (f.kind === 'branch' || f.kind === 'remote') && f.label === name)
+        || (branchTips !== undefined && Object.prototype.hasOwnProperty.call(branchTips, name))
+        || (refTips !== undefined && Object.prototype.hasOwnProperty.call(refTips, name)),
+      )
     setFilter((current) => {
       const next: GraphFilter = {
-        branches: keep(current.branches, ['branch', 'remote']),
+        branches: keepBranches(current.branches),
         tags: keep(current.tags, ['tag']),
         authors: keep(current.authors, ['author']),
       }
@@ -92,7 +103,7 @@ export function GitGraphSplit({
         || next.authors.length !== current.authors.length
       return changed ? next : current
     })
-  }, [commits])
+  }, [commits, branchTips, refTips])
 
   const splitStyle: CSSProperties = {
     // Single-axis flex: the list pane takes the leftover width, the detail rail
@@ -142,6 +153,7 @@ export function GitGraphSplit({
           filter={filter}
           onFilterChange={onFilterChange}
           refTips={refTips}
+          branchTips={branchTips}
           labels={{
             empty: t('gitGraphEmpty', 'No commits yet'),
             loadMore: t('gitGraphLoadMore', 'Load more'),
@@ -152,16 +164,14 @@ export function GitGraphSplit({
             author: t('gitGraphColumnAuthor', 'Author'),
             commit: t('gitGraphColumnCommit', 'Commit'),
             filter: {
-              trigger: t('gitGraphFilter', 'Filter'),
-              branches: t('gitGraphFilterBranches', 'Branches'),
+              branches: t('gitGraphFilterBranches', 'Branch'),
               localBranches: t('gitGraphFilterLocal', 'Local branches'),
               remoteBranches: t('gitGraphFilterRemote', 'Remote branches'),
-              tags: t('gitGraphFilterTags', 'Tags'),
-              authors: t('gitGraphFilterAuthors', 'Authors'),
+              authors: t('gitGraphFilterAuthors', 'Author'),
               clear: t('gitGraphFilterClear', 'Clear filter'),
               empty: t('gitGraphFilterEmpty', 'Nothing to filter by yet'),
               none: t('gitGraphFilterNone', 'All branches'),
-              active: (n) => t('gitGraphFilterActive', '{n} filter(s) active').replace('{n}', String(n)),
+              allAuthors: t('gitGraphFilterAllAuthors', 'All authors'),
               shown: (shown, total) => t('gitGraphFilterShown', '{shown} / {total} commits')
                 .replace('{shown}', String(shown)).replace('{total}', String(total)),
               noMatches: t('gitGraphFilterNoMatches', 'No commits match the current filter'),

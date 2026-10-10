@@ -85,6 +85,7 @@ export function GitGraphDialog({ open, cwd, onClose, t }: GitGraphDialogProps): 
             onLoadMore={graph.loadMore}
             t={label}
             refTips={graph.refTips}
+            branchTips={graph.branchTips}
           />
         )}
       </div>

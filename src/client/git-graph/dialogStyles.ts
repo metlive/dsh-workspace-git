@@ -79,6 +79,23 @@ const CSS = `
   display: flex !important;
   flex-direction: column !important;
 }
+.workspace-git-graph-dialog [data-git-graph-toolbar] {
+  flex: none !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+/* Keep the same border after a choice; focus must not erase it. */
+.workspace-git-graph-dialog [data-git-graph-filter-select],
+.workspace-git-graph-dialog [data-git-graph-filter-select]:hover,
+.workspace-git-graph-dialog [data-git-graph-filter-select]:focus,
+.workspace-git-graph-dialog [data-git-graph-filter-select]:focus-visible,
+.workspace-git-graph-dialog [data-git-graph-filter-select]:active {
+  border: 1px solid var(--dsw-alias-border-l2) !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background-color: #fff !important;
+}
 .workspace-git-graph-dialog [data-git-graph-header] {
   flex: none !important;
   width: 100% !important;

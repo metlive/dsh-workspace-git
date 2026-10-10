@@ -166,6 +166,14 @@ function clampSkip(skip: number | undefined): number {
   return Math.max(0, Math.floor(skip))
 }
 
+/** Tip maps for graph filtering: all refs for resolution, branches for the dropdown. */
+export interface RefTipsSnapshot {
+  /** Short ref name → object id for heads, remotes, and tags. */
+  tips: Record<string, string>
+  /** Short ref name → object id for local and remote-tracking branches only. */
+  branches: Record<string, string>
+}
+
 /**
  * Resolve every branch and tag tip to its object id, for one repository.
  *
@@ -176,27 +184,31 @@ function clampSkip(skip: number | undefined): number {
  * empty graph. This map lets the client resolve a selected branch name to its
  * tip hash regardless of which page is loaded.
  *
- * Local branches, remote-tracking branches, and tags are all included. The keys
- * are the short names the UI shows (`main`, `origin/main`, `v1`), which is the
- * same spelling `--decorate` produces, so the two agree.
+ * Local branches, remote-tracking branches, and tags are all included in
+ * `tips`. `branches` is the heads+remotes subset used to populate the graph's
+ * branch dropdown without listing tags. The keys are the short names the UI
+ * shows (`main`, `origin/main`, `v1`), which is the same spelling `--decorate`
+ * produces, so the two agree.
  *
- * A repository with no refs yields an empty map rather than an error.
+ * A repository with no refs yields empty maps rather than an error.
  * @param path - absolute workspace path.
- * @returns short ref name -> object id.
+ * @returns tip maps keyed by short ref name.
  */
-export async function fetchRefTips(path: string): Promise<Record<string, string>> {
+export async function fetchRefTips(path: string): Promise<RefTipsSnapshot> {
+  const empty: RefTipsSnapshot = { tips: {}, branches: {} }
   const workTree = await findWorkTree(path)
-  if (workTree === undefined) return {}
+  if (workTree === undefined) return empty
   try {
     const { stdout } = await execFileAsync(
       'git',
       [
         'for-each-ref',
-        // `%(symref)` is the discriminator for the remote's symbolic HEAD. It
-        // is EMPTY for an ordinary ref, so `refs/remotes/origin/HEAD` (which
-        // points at a branch) reports `refs/heads/main` while a plain branch
-        // that merely happens to be NAMED `.../HEAD` reports nothing.
-        '--format=%(refname:short)%00%(objectname)%00%(symref)',
+        // `%(refname)` classifies heads / remotes / tags; `%(symref)` is the
+        // discriminator for the remote's symbolic HEAD. It is EMPTY for an
+        // ordinary ref, so `refs/remotes/origin/HEAD` (which points at a
+        // branch) reports `refs/heads/main` while a plain branch that merely
+        // happens to be NAMED `.../HEAD` reports nothing.
+        '--format=%(refname)%00%(refname:short)%00%(objectname)%00%(symref)',
         'refs/heads',
         'refs/remotes',
         'refs/tags',
@@ -209,11 +221,12 @@ export async function fetchRefTips(path: string): Promise<Record<string, string>
       },
     )
     const tips: Record<string, string> = {}
+    const branches: Record<string, string> = {}
     for (const line of stdout.split('\n')) {
       const trimmed = line.trim()
       if (trimmed === '') continue
-      const [name, objectId, symref] = trimmed.split(FIELD_SEP)
-      if (!name || !objectId) continue
+      const [refname, name, objectId, symref] = trimmed.split(FIELD_SEP)
+      if (!refname || !name || !objectId) continue
       /*
        * Skip ONLY symbolic refs.
        *
@@ -231,11 +244,14 @@ export async function fetchRefTips(path: string): Promise<Record<string, string>
        */
       if (symref !== undefined && symref !== '') continue
       tips[name] = objectId
+      if (refname.startsWith('refs/heads/') || refname.startsWith('refs/remotes/')) {
+        branches[name] = objectId
+      }
     }
-    return tips
+    return { tips, branches }
   } catch (error) {
     const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
-    if (message.includes('not a git repository')) return {}
+    if (message.includes('not a git repository')) return empty
     throw error
   }
 }

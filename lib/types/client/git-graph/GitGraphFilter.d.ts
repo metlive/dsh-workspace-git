@@ -1,16 +1,15 @@
 /**
- * Branch/tag/author filter control for the commit graph.
+ * Branch + author filter toolbar for the commit graph.
  *
- * A single trigger button ("筛选") in the graph's header row, opening a popover
- * of grouped checkboxes with an active-count badge and a clear action. It is a
- * plain button + absolutely-positioned popover rather than the `Menu` primitive,
- * for one reason: `Menu` treats a click as a selection and closes, but a facet
- * panel must stay open while several boxes are ticked. The dismissal contract
- * (outside click, Escape) is the same one `Menu` implements, so nothing about
- * the interaction is novel.
+ * Two native `<select>` dropdowns sit in a compact toolbar above the commit
+ * table: one for branch (local then remote), one for author ("操作者"). Native
+ * selects keep the keyboard and screen-reader contract without depending on a
+ * Menu primitive that closes on every click — which is the wrong interaction
+ * for a facet panel, and also wrong for a single-select that should stay put
+ * after a choice.
  *
  * The component is presentational: it renders whatever facets it is handed and
- * reports toggles upward. All filtering logic lives in `filter.ts`.
+ * reports dimension changes upward. All filtering logic lives in `filter.ts`.
  */
 import { type ReactNode } from 'react';
 import { type FacetOption, type GraphFilter } from './filter.ts';
@@ -19,30 +18,30 @@ export interface GitGraphFilterProps {
     facets: readonly FacetOption[];
     /** The active selection. */
     filter: GraphFilter;
-    /** Toggle one facet value. */
-    onToggle: (option: FacetOption) => void;
+    /** Replace the branch dimension (empty string clears). */
+    onBranchChange: (branch: string) => void;
+    /** Replace the author dimension (empty string clears). */
+    onAuthorChange: (author: string) => void;
     /** Clear every dimension. */
     onClear: () => void;
     /** How many commits the filter currently shows, and how many are loaded. */
     shownCount: number;
     totalCount: number;
     labels: {
-        trigger: string;
         branches: string;
         localBranches: string;
         remoteBranches: string;
-        tags: string;
         authors: string;
         clear: string;
         empty: string;
         none: string;
-        active: (n: number) => string;
+        allAuthors: string;
         shown: (shown: number, total: number) => string;
     };
 }
 /**
- * Render the filter control.
+ * Render the branch / author filter toolbar.
  * @param props - facets, the active filter, and their handlers.
- * @returns the trigger and its popover.
+ * @returns the toolbar with two dropdowns.
  */
-export declare function GitGraphFilterControl({ facets, filter, onToggle, onClear, shownCount, totalCount, labels, }: GitGraphFilterProps): ReactNode;
+export declare function GitGraphFilterControl({ facets, filter, onBranchChange, onAuthorChange, onClear, shownCount, totalCount, labels, }: GitGraphFilterProps): ReactNode;

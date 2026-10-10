@@ -15,7 +15,11 @@ export declare function fetchCommitGraph(path: string, maxCount?: number, skip?:
  * @param signal - optional abort.
  * @returns short ref name -> object id (empty for a non-repository).
  */
-export declare function fetchRefTips(path: string, signal?: AbortSignal): Promise<Record<string, string>>;
+export interface RefTipsResult {
+    tips: Record<string, string>;
+    branches: Record<string, string>;
+}
+export declare function fetchRefTips(path: string, signal?: AbortSignal): Promise<RefTipsResult>;
 /**
  * Fetch one commit's detail for the right-hand panel.
  * @param path - absolute workspace path.

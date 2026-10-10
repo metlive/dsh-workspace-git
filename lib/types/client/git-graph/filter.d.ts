@@ -61,13 +61,15 @@ export declare function isFilterActive(filter: GraphFilter): boolean;
 /**
  * Collect the selectable values present in one page of commits.
  *
- * Counts are per-page by design: the panel offers what the user can actually
- * see, and a branch whose commits all sit on a later page would otherwise
- * appear as a choice that filters to nothing.
+ * Author counts are per-page by design: the dropdown offers authors the user
+ * can actually see. Branches additionally merge in every short name from the
+ * host `tips` map so the branch dropdown lists the whole repository, not only
+ * the tips that happen to be decorated on the current page.
  * @param commits - the loaded commits.
+ * @param tips - short ref name → object id, from the host `tips` method.
  * @returns branch (local then remote), tag, and author options.
  */
-export declare function collectFacets(commits: readonly GitGraphCommit[]): FacetOption[];
+export declare function collectFacets(commits: readonly GitGraphCommit[], tips?: Readonly<Record<string, string>>): FacetOption[];
 /**
  * Resolve which commits are reachable from a set of starting hashes, walking
  * `parents` within the loaded page.
@@ -148,5 +150,22 @@ export declare function toggleFacet(filter: GraphFilter, option: FacetOption): G
 export declare function isFacetSelected(filter: GraphFilter, option: FacetOption): boolean;
 /** Total number of selected values across every dimension. */
 export declare function selectedCount(filter: GraphFilter): number;
+/**
+ * Set the branch dimension to a single name (or clear it).
+ *
+ * The toolbar exposes a single-select dropdown, so the selection is always
+ * zero or one branch. Tags and authors are left untouched.
+ * @param filter - the current selection.
+ * @param branch - the short ref name, or `null` / `''` for "all branches".
+ * @returns the updated selection.
+ */
+export declare function setFilterBranch(filter: GraphFilter, branch: string | null): GraphFilter;
+/**
+ * Set the author dimension to a single name (or clear it).
+ * @param filter - the current selection.
+ * @param author - the author name, or `null` / `''` for "all authors".
+ * @returns the updated selection.
+ */
+export declare function setFilterAuthor(filter: GraphFilter, author: string | null): GraphFilter;
 /** Re-exported so callers need not reach into the wire types for the kind. */
 export type { GitGraphRefKind };

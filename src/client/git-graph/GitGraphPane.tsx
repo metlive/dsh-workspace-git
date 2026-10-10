@@ -14,8 +14,8 @@ import {
   collectFacets,
   filterCommits,
   isFilterActive,
-  toggleFacet,
-  type FacetOption,
+  setFilterAuthor,
+  setFilterBranch,
   type GraphFilter,
 } from './filter.ts'
 
@@ -36,6 +36,8 @@ export interface GitGraphPaneProps {
   onFilterChange?: (next: GraphFilter) => void
   /** Short ref name -> object id, used to resolve a branch selection to a walk root. */
   refTips?: Readonly<Record<string, string>>
+  /** Heads + remotes only; populates the branch filter dropdown. */
+  branchTips?: Readonly<Record<string, string>>
   labels: {
     empty: string
     loadMore: string
@@ -47,16 +49,14 @@ export interface GitGraphPaneProps {
     commit: string
     /** Filter chrome; omitted entirely when the caller supplies no filter. */
     filter?: {
-      trigger: string
       branches: string
       localBranches: string
       remoteBranches: string
-      tags: string
       authors: string
       clear: string
       empty: string
       none: string
-      active: (n: number) => string
+      allAuthors: string
       shown: (shown: number, total: number) => string
       /** Shown when the filter hides every commit. */
       noMatches: string
@@ -114,13 +114,15 @@ export function GitGraphPane({
   filter,
   onFilterChange,
   refTips,
+  branchTips,
   labels,
 }: GitGraphPaneProps): ReactNode {
   const [hovered, setHovered] = useState<string | null>(null)
 
-  // The facets offered are derived from the loaded commits, so the panel can
-  // never present a choice that filters to nothing.
-  const facets = useMemo(() => collectFacets(commits), [commits])
+  // Facets come from the loaded page (authors/tags) plus the host branch tips
+  // map (every local/remote branch), so the branch dropdown lists the whole
+  // repository without offering tags as branches.
+  const facets = useMemo(() => collectFacets(commits, branchTips), [commits, branchTips])
 
   const activeFilter = filter ?? EMPTY_FILTER
   const filterOn = isFilterActive(activeFilter)
@@ -147,13 +149,30 @@ export function GitGraphPane({
   const layout = useMemo(() => layoutGitGraph(visibleCommits, { rowHeight: 30 }), [visibleCommits])
   const graphWidth = Math.max(layout.width + 12, GRAPH_COLUMN_MIN)
 
-  const onToggleFacet = useCallback((option: FacetOption) => {
-    onFilterChange?.(toggleFacet(activeFilter, option))
+  const onBranchChange = useCallback((branch: string) => {
+    onFilterChange?.(setFilterBranch(activeFilter, branch))
+  }, [activeFilter, onFilterChange])
+
+  const onAuthorChange = useCallback((author: string) => {
+    onFilterChange?.(setFilterAuthor(activeFilter, author))
   }, [activeFilter, onFilterChange])
 
   const onClearFilter = useCallback(() => {
     onFilterChange?.(EMPTY_FILTER)
   }, [onFilterChange])
+
+  const filterToolbar = labels.filter !== undefined && onFilterChange !== undefined ? (
+    <GitGraphFilterControl
+      facets={facets}
+      filter={activeFilter}
+      onBranchChange={onBranchChange}
+      onAuthorChange={onAuthorChange}
+      onClear={onClearFilter}
+      shownCount={visibleCommits.length}
+      totalCount={commits.length}
+      labels={labels.filter}
+    />
+  ) : null
 
   const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     if (!hasMore || loadingMore || !onLoadMore) return
@@ -191,19 +210,7 @@ export function GitGraphPane({
           width: '100%',
         }}
       >
-        {filterOn && labels.filter !== undefined ? (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 8px' }}>
-            <GitGraphFilterControl
-              facets={facets}
-              filter={activeFilter}
-              onToggle={onToggleFacet}
-              onClear={onClearFilter}
-              shownCount={0}
-              totalCount={commits.length}
-              labels={labels.filter}
-            />
-          </div>
-        ) : null}
+        {filterToolbar}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -236,6 +243,7 @@ export function GitGraphPane({
         width: '100%',
       }}
     >
+      {filterToolbar}
       <div
         data-git-graph-header=""
         style={{
@@ -271,22 +279,7 @@ export function GitGraphPane({
           <div style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.description}</div>
           <div data-git-graph-meta="" style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.date}</div>
           <div data-git-graph-meta="" style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.author}</div>
-          {/* The filter sits over the commit-hash column: it is graph chrome, and
-              the hash column is the one cell that stays readable at every width
-              (the table drops date/author under 720px). */}
-          <div style={{ padding: '0 6px', overflow: 'visible', display: 'flex', justifyContent: 'flex-end' }}>
-            {labels.filter !== undefined && onFilterChange !== undefined ? (
-              <GitGraphFilterControl
-                facets={facets}
-                filter={activeFilter}
-                onToggle={onToggleFacet}
-                onClear={onClearFilter}
-                shownCount={visibleCommits.length}
-                totalCount={commits.length}
-                labels={labels.filter}
-              />
-            ) : labels.commit}
-          </div>
+          <div style={{ padding: '0 8px', overflow: 'hidden' }}>{labels.commit}</div>
         </div>
       </div>
 

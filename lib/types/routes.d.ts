@@ -87,6 +87,7 @@ export declare function resolveGraph(payload: unknown): Promise<GitGraphSnapshot
  */
 export declare function resolveTips(payload: unknown): Promise<{
     tips: Record<string, string>;
+    branches: Record<string, string>;
 }>;
 /**
  * Narrow a checkout request: absolute path + branch name + optional kind.
